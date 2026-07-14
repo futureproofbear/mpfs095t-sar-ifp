@@ -4,7 +4,7 @@ Requirement (2026-07-12): the SAR fabric must fit **both** boards, and the **del
 be programmable by a **non-engineer who does not have Libero SoC installed**.
 
 - **Development board:** Icicle Kit — **MPFS250T-FCVG484**, 2 GiB LPDDR4. Engineer builds/debugs here.
-- **Delivery board:** Discovery Kit — **MPFS095T-FCSG325**, LPDDR4, 64-bit DDR addressing exposed.
+- **Delivery board:** Discovery Kit — **MPFS095T-FCSG325**, DDR4 (corrected 2026-07-14: reference MSS `DDR_SDRAM_TYPE DDR4`; earlier "LPDDR4" was wrong), 64-bit DDR addressing exposed.
 - The operator on the delivery side flashes a pre-built image; they have **no Libero, no HLS, no P&R** —
   only a USB FlashPro and a click/script.
 

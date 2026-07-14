@@ -25,6 +25,29 @@ budget: strip the bypassed fabric DET kernel (CPU detect ships → frees ~3.8 K 
 lanes at **≤ 2**, keep the DDR map in the shared cached `0x8000_0000` window, omit the 16k-FFT
 combine from the delivery build. **Actual P&R + timing closure at 62.5 MHz is the make-or-break gate.**
 
+## Documentation-check findings (2026-07-14, before finalising the design)
+
+Checked the Discovery reference design + MSS configs + our proven 250T flow. Results:
+
+- **DDR = DDR4** (authoritative: `DDR_SDRAM_TYPE DDR4`, `DDR4_CLOCK_DDR 800` in the reference MSS
+  `.cfg`). NOT LPDDR4 (the `DUAL_FIT_AND_DELIVERY.md` claim is **wrong** — corrected there) and NOT
+  DDR3 (those params are inactive template defaults). The MSS DDR controller + timing are DDR4-1600.
+- **FIC0 embedded DLL is ENABLED** in the vendored + reference Discovery MSS (`FIC_0_EMBEDDED_DLL_USED
+  true`). On the 250T this DLL-enabled config **hung the data-plane**; our fix (`mss_nodll`) bypasses
+  it. → the Discovery MSS must set `FIC_0/1/2_EMBEDDED_DLL_USED false` for the 62.5 MHz path.
+- **microSD is DISABLED everywhere available** (`SD_PORTS_DISABLE true`, `EMMC UNUSED` in BOTH the
+  vendored config and the authoritative reference — the reference design runs without SD). **BLOCKER:**
+  enabling the microSD correctly needs the Discovery **SD-boot MSS config** (Microchip Discovery
+  Linux/HSS BSP) or the Kit schematic — **not present in the local materials**. Do NOT guess the SD
+  MSSIO; it would likely fail DDR/SD bring-up and waste a build.
+- **Libero SoC 2025.2 is installed**; the reference build flow is the standard SYNTHESIZE → PLACEROUTE
+  → VERIFYTIMING (same gated flow as our 250T build).
+
+**Design decision:** de-risk the make-or-break unknown FIRST — build the SAR fabric for **fit + timing
+on the 095T with the current (SD-disabled) MSS + the FIC-DLL bypass**. That proves the design fits the
+095T LSRAM budget and closes at 62.5 MHz *without* depending on the unresolved SD config. The SD-enable
++ firmware SD loader then layer on once the Discovery SD-boot MSS config is obtained.
+
 ## Discovery hardware facts (from the Microchip reference design)
 
 Source: `github/polarfire-soc/polarfire-soc-discovery-kit-reference-design` (the vendor Libero flow).
