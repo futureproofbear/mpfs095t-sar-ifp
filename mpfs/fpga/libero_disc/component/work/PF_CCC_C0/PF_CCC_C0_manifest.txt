@@ -1,0 +1,14 @@
+Microchip Technology Inc. - Microchip Libero Software Release 2025.2 (Version 2025.2.0.14)
+
+Date      :  Tue Jul 14 22:52:22 2026
+Project   :  C:\Users\lkwangsi\Documents\github\mpfs095t-sar-ifp\mpfs\fpga\libero_disc
+Component :  PF_CCC_C0
+Family    :  PolarFireSoC
+
+
+HDL source files for all Synthesis and Simulation tools:
+    C:/Users/lkwangsi/Documents/github/mpfs095t-sar-ifp/mpfs/fpga/libero_disc/component/work/PF_CCC_C0/PF_CCC_C0_0/PF_CCC_C0_PF_CCC_C0_0_PF_CCC.v
+    C:/Users/lkwangsi/Documents/github/mpfs095t-sar-ifp/mpfs/fpga/libero_disc/component/work/PF_CCC_C0/PF_CCC_C0.v
+
+Constraint files:
+    C:/Users/lkwangsi/Documents/github/mpfs095t-sar-ifp/mpfs/fpga/libero_disc/component/work/PF_CCC_C0\PF_CCC_C0_0\PF_CCC_C0_PF_CCC_C0_0_PF_CCC.sdc

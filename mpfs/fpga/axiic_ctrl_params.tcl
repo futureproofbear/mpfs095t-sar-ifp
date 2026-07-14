@@ -9,7 +9,6 @@ set AXIIC_CTRL_PARAMS [list \
     "DWC_ADDR_FIFO_DEPTH:8"  \
     "DWC_RAM_TYPE:3"  \
     "EXPOSE_RST:false"  \
-    "FAMILY:19"  \
     "I0_LOCK_WIDTH:1"  \
     "I1_LOCK_WIDTH:1"  \
     "I2_LOCK_WIDTH:1"  \

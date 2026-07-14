@@ -1,14 +1,14 @@
 ## build_full_prog_ffv.tcl -- P&R the reconstructed libero_ffv (SAR_TOP with the Verilog
 ## feeder fft_feeder_v). Import constraints + derive the 62.5 MHz clocks, SYNTH -> P&R ->
 ## VERIFYTIMING -> gate on setup+hold -> export bitstream. NO PROGRAMDEVICE (board off).
-set here {C:/Users/lkwangsi/Documents/github/mpfs250t-sar-ifp/mpfs/fpga}
+set here {C:/Users/lkwangsi/Documents/github/sarProcessor/mpfs/fpga}
 set pd "$here/libero_ffv"
 open_project -file "$pd/sar_accel.prjx"
 build_design_hierarchy
 set_root -module {SAR_TOP::work}
 
 ## constraints: import the CDC + IO PDC (from libero_sar) and derive the CCC clocks (62.5/7.8125)
-catch { import_files -io_pdc "$here/libero_sar/constraint/io/sar_io.pdc" }
+catch { import_files -io_pdc "$here/constraints/sar_io.pdc" }
 catch { import_files -sdc    "$here/libero_sar/constraint/sar_fft_cdc.sdc" }
 if {[catch { derive_constraints_sdc } e]} { puts "DERIVE_RC: $e" } else { puts "DERIVE_OK" }
 build_design_hierarchy
