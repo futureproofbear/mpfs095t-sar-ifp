@@ -54,7 +54,7 @@ Source: `github/polarfire-soc/polarfire-soc-discovery-kit-reference-design` (the
 | ⑤ | **Discovery MSS + LPDDR4 + SD** wired for the SAR datapath — **must ENABLE the microSD** (vendored MSS cfg ships EMMC/SD UNUSED) + FIC0 + DDR map, regen `fpga_design_config` | TODO | Discovery board to verify DDR/SD |
 | ⑥ | **Firmware SD read path** — `sar_sd_load` (card_type=SD, read `SARI`@LBA 0 → DDR role addrs → JOB), mirror of the proven eMMC loader | TODO | ⑤ |
 | ⑦ | **Bitstream build + timing close on 095T** → export `.job` (fabric + eNVM firmware bundled) | **GATED** | ③④ + Libero P&R (~1 h headless) |
-| ⑧ | **Delivery package** — `program.bat` (`FPExpress.exe RUN_PROJECT`), FPExpress installer note, one-page operator runbook | TODO (scaffold) | ⑦ for the real `.job` |
+| ⑧ | **Delivery package** — operator runbooks + one-click launcher | **DONE** — `docs/PROGRAM_THE_BOARD.md`, `docs/SD_PROVISIONING.md`, `mpfs/host/program.bat` | the real `.job` waits on ⑦ |
 | ⑨ | **On-silicon bring-up** — DDR train, SD read, run pipeline, verify focused image | **GATED** | Discovery board (colleague side) |
 
 ## The critical path / risk gates
