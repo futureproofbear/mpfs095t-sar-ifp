@@ -1,0 +1,34 @@
+# Fabric I/O pin assignments for SAR_TOP on the PolarFire SoC DISCOVERY KIT
+# (MPFS095T-FCSG325).  Pins taken from the Microchip Discovery Kit reference design
+# (polarfire-soc-discovery-kit-reference-design/script_support/constraints/
+#  MPFS_DISCOVERY_KIT_BOARD_MISC.pdc + MPFS_DISCOVERY_UARTS.pdc + BANK_SETTINGS.pdc).
+#
+# Only REFCLK + the debug MMUART are user-fabric pins. DDR (LPDDR4) and the microSD
+# (MSS SDMMC) are MSS-dedicated and auto-placed -- they are configured in the MSS
+# .cfg, NOT here. NB: the vendored Discovery MSS config ships with EMMC/SD UNUSED;
+# the microSD must be ENABLED in the MSS config before the SD load path works.
+#
+# Bank voltages (from MPFS_DISCOVERY_KIT_BANK_SETTINGS.pdc): Bank0 = 1.8 V, Bank1 = 3.3 V.
+
+# 50 MHz fabric reference clock (feeds the CCC -> 62.5 MHz SAR clocks). LVCMOS18.
+set_io -port_name REF_CLK_50MHz \
+    -pin_name R18 \
+    -fixed true \
+    -io_std LVCMOS18 \
+    -DIRECTION INPUT
+
+# Debug MMUART routed to the on-board FTDI USB-UART.
+#   FTDI_UART_D_TXD (W21) = FTDI transmits -> SoC receives  => MMUART RXD input
+#   FTDI_UART_D_RXD (Y21) = FTDI receives  <- SoC transmits => MMUART TXD output
+# (Verify TX/RX polarity + io_std against the FTDI bank if UART comes up garbled.)
+set_io -port_name MMUART_0_TXD_M2F \
+    -pin_name Y21 \
+    -fixed true \
+    -io_std LVCMOS18 \
+    -DIRECTION OUTPUT
+
+set_io -port_name MMUART_0_RXD_F2M \
+    -pin_name W21 \
+    -fixed true \
+    -io_std LVCMOS18 \
+    -DIRECTION INPUT
