@@ -178,3 +178,7 @@ docs/fpga/SAR_ARCHITECTURE_REPORT.pdf
 
 # build console logs (generated)
 *.console.txt
+
+# Discovery Libero build output (regenerated)
+mpfs/fpga/libero_disc/
+mpfs/fpga/hls_*/hls_output/
