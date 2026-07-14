@@ -19,4 +19,4 @@ echo "[$(date +%H:%M:%S)] STAGE 1 OK"
 echo "[$(date +%H:%M:%S)] STAGE 2/2: synth + P&R + VERIFYTIMING gate + export"
 run "$FPGA/build_disc.tcl" "$FPGA/disc_build.log"
 echo "[$(date +%H:%M:%S)] STAGE 2 result:"
-grep -aE "SYN_OK|PNR_OK|VT_OK|SETUP nviol|HOLD nviol|TIMING_MET|TIMING_NOT_MET|BITSTREAM_DONE|FFV_BUILD_DONE|_RC:" "$FPGA/disc_build.log" | tail -20
+grep -aE "SYN_OK|PNR_OK|VT_OK|SETUP nviol|HOLD nviol|TIMING_MET|BUILD_NOT_CLEAN|BITSTREAM_DONE|BITSTREAM_FAIL|FFV_BUILD_DONE|_RC:" "$FPGA/disc_build.log" | tail -20
