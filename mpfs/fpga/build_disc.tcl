@@ -20,7 +20,16 @@ catch { organize_tool_files -tool {PLACEROUTE}   -file $iopdc -file $dsdc -file 
 catch { organize_tool_files -tool {VERIFYTIMING} -file $dsdc -file $cdc -module {SAR_TOP::work} -input_type {constraint} }
 
 if {[catch { run_tool -name {SYNTHESIZE} } e]} { puts "SYN_RC: $e"; set synok 0 } else { puts "SYN_OK"; set synok 1 }
-catch { configure_tool -name {PLACEROUTE} -params {REPAIR_MIN_DELAY:true} }
+## Timing-driven multi-pass P&R (matches the proven Discovery reference-design flow) to
+## recover routing delay on the detect-kernel critical path. STOP_ON_FIRST_PASS stops once a
+## passing layout is found; EFFORT_LEVEL:true + TDPR:true = high-effort timing-driven place+route.
+catch { configure_tool -name {PLACEROUTE} \
+  -params {DELAY_ANALYSIS:MAX} -params {EFFORT_LEVEL:true} -params {GB_DEMOTION:true} \
+  -params {INCRPLACEANDROUTE:false} -params {IOREG_COMBINING:false} \
+  -params {MULTI_PASS_CRITERIA:VIOLATIONS} -params {MULTI_PASS_LAYOUT:true} -params {NUM_MULTI_PASSES:5} \
+  -params {PDPR:false} -params {RANDOM_SEED:0} -params {REPAIR_MIN_DELAY:true} -params {REPLICATION:false} \
+  -params {SLACK_CRITERIA:WORST_SLACK} -params {SPECIFIC_CLOCK:} -params {START_SEED_INDEX:1} \
+  -params {STOP_ON_FIRST_PASS:true} -params {TDPR:true} }
 if {[catch { run_tool -name {PLACEROUTE} } e]} { puts "PNR_RC: $e"; set pnrok 0 } else { puts "PNR_OK"; set pnrok 1 }
 if {[catch { run_tool -name {VERIFYTIMING} } e]} { puts "VT_RC: $e"; set vtok 0 } else { puts "VT_OK"; set vtok 1 }
 save_project
