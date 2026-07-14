@@ -45,8 +45,25 @@ Checked the Discovery reference design + MSS configs + our proven 250T flow. Res
 
 **Design decision:** de-risk the make-or-break unknown FIRST — build the SAR fabric for **fit + timing
 on the 095T with the current (SD-disabled) MSS + the FIC-DLL bypass**. That proves the design fits the
-095T LSRAM budget and closes at 62.5 MHz *without* depending on the unresolved SD config. The SD-enable
-+ firmware SD loader then layer on once the Discovery SD-boot MSS config is obtained.
+095T LSRAM budget and closes at 62.5 MHz *without* depending on the unresolved SD config.
+
+**SD/boot model — SWITCHED TO HSS (2026-07-14, confirmed).** Instead of a bare-metal SDMMC driver, use
+Microchip's **Hart Software Services (HSS)** — the proven Discovery SD-boot layer. HSS (on E51) owns DDR
+init + SDMMC + reading the card; our SAR U54 app + the scene data become an **HSS payload**
+(`hss-payload-generator`) that HSS loads into DDR from the microSD, then starts the app. This removes
+the bare-metal SD-enable blocker (no SD MSS surgery), keeps the fabric bitstream + pipeline unchanged,
+and is the vendor-standard flow. Source is local: `github/polarfire-soc/hart-software-services` (+ bare-
+metal examples, PolarFire SoC docs, Icicle baremetal/linux MSS cfgs). `sd_pack.py` will produce/feed an
+HSS boot image instead of the raw SARI image; the `.job` bundles fabric + HSS in eNVM.
+
+**Fabric build prerequisite (found 2026-07-14):** the per-kernel HLS outputs
+(`hls_*/hls_output/scripts/libero/create_hdl_plus.tcl`) are **gitignored** and 4 of the 6 are absent on
+disk (`corner_turn`, `detect`, `fft_feeder`, `fft_unloader`; only `window` + `resample` remain). The HLS
+C++ source + Makefiles + `config.tcl` ARE in the repo, and **SmartHLS + Libero 2025.2 + `License.dat`
+are installed**, so the build sequence is: (1) `shls hw` regenerate the 4 kernels → (2)
+`create_fresh_project_disc.tcl` (device `MPFS095T/FCSG325/-1/1.0V` + the regenerated Discovery MSS `.cxz`
++ `sar_io_discovery.pdc`, DET buildable but bypassed) → (3) Libero SYNTH → P&R → VERIFYTIMING gate →
+export. ~2–3 h headless; the make-or-break is LSRAM fit + 62.5 MHz closure.
 
 ## Discovery hardware facts (from the Microchip reference design)
 
