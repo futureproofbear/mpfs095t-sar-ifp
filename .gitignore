@@ -182,3 +182,4 @@ docs/fpga/SAR_ARCHITECTURE_REPORT.pdf
 # Discovery Libero build output (regenerated)
 mpfs/fpga/libero_disc/
 mpfs/fpga/hls_*/hls_output/
+mpfs/fpga/hss/out/*.elf
