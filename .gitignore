@@ -186,5 +186,3 @@ mpfs/fpga/hss/out/*.elf
 
 # generated per-scene SD image + staged scene (large, not delivered via git)
 scratch_stage/
-/payload.bin
-mpfs/host/payload.bin

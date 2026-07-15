@@ -9,6 +9,9 @@ image former. No Libero, SoftConsole, or Python required to program — only **F
   (the SAR datapath: CoreFFT + resample/window/detect/corner-turn kernels, timing-closed at
   62.5 MHz) **and HSS in eNVM** (the SD-boot loader). Programmed once.
 - **`program.bat`** — one-click launcher for FlashPro Express.
+- **`payload.bin`** — the **prebuilt SAR app** (HSS payload, 43 KB). You do NOT build firmware; the
+  microSD tooling (`../host/sd_pack.py --gpt --payload payload.bin ...`) drops this straight onto the
+  card's P1 partition. See [`../../docs/SD_PROVISIONING.md`](../../docs/SD_PROVISIONING.md) Path B.
 
 ## Two steps
 
