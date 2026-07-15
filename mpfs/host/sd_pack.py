@@ -20,6 +20,7 @@ Usage:
 """
 import sys
 import json
+import zlib
 import struct
 import argparse
 from pathlib import Path
@@ -30,6 +31,104 @@ import ddr_layout as L  # noqa: E402
 
 # Raw SD data card: the 'SARI' superblock sits at the very start of the card.
 SD_IN_LBA = 0
+
+# ---------------------------------------------------------------------------
+# GPT SD-boot layout (HSS reads the payload from a GPT partition; --gpt mode)
+# ---------------------------------------------------------------------------
+# HSS (CONFIG_SERVICE_BOOT_MMC_USE_GPT=y) walks the GPT and loads the partition
+# whose TYPE GUID matches its payload GUID into DDR, then jumps to it. We lay down:
+#   P1 = HSS payload (the SAR app, wrapped by hss-payload-generator)  -- 32 MiB reserve
+#   P2 = the 'SARI' scene image (superblock + blobs), read by the app -- fixed base LBA
+# P2's base LBA is FIXED so the app can hard-code SAR_SD_SCENE_LBA (below); the app reads
+# the 'SARI' superblock there and follows the TOC's absolute card LBAs.
+SECTOR = 512
+_ALIGN = 2048                                   # 1 MiB partition alignment
+P1_FIRST_LBA = 2048                             # HSS payload partition start
+PAYLOAD_RESERVE_SECTORS = 65536                 # 32 MiB reserved for the payload (app << this)
+P2_FIRST_LBA = P1_FIRST_LBA + PAYLOAD_RESERVE_SECTORS   # = 67584 -> app's SAR_SD_SCENE_LBA
+SAR_SD_SCENE_LBA = P2_FIRST_LBA                 # firmware constant: where the SARI superblock is
+
+# HSS payload partition TYPE GUID -- matched byte-for-byte to hart-software-services
+# services/boot/gpt.c: {data1=0x21686148, data2=0x6449, data3=0x6E6F, data4=0x4946456465654e74}.
+# HSS reads the on-disk 16 bytes into {u32,u16,u16,u64} on a little-endian hart, so we emit
+# data1/2/3 little-endian and data4 as a little-endian u64 (this is HSS's own convention).
+HSS_PAYLOAD_TYPE_GUID = (struct.pack("<I", 0x21686148) + struct.pack("<H", 0x6449)
+                         + struct.pack("<H", 0x6E6F) + struct.pack("<Q", 0x4946456465654E74))
+# P2 (SARI scene) -- arbitrary distinct type; the app finds it by fixed LBA, not by GUID.
+SARI_DATA_TYPE_GUID = (struct.pack("<I", 0x53415249) + struct.pack("<H", 0x0001)
+                       + struct.pack("<H", 0x0001) + b"SARSCENE")   # "SARI"...
+# Deterministic disk/unique GUIDs (host tool -> reproducible images; no randomness needed).
+_DISK_GUID = bytes.fromhex("53415249" "4449" "534b" "0000000000000001")
+_P1_UNIQUE = bytes.fromhex("53415249" "5041" "594c" "0000000000000001")
+_P2_UNIQUE = bytes.fromhex("53415249" "5343" "4e45" "0000000000000002")
+
+
+def _crc32(b):
+    return zlib.crc32(b) & 0xFFFFFFFF
+
+
+def _gpt_part_entry(type_guid, unique_guid, first_lba, last_lba, name):
+    """One 128-byte GPT partition entry."""
+    nm = name.encode("utf-16-le")[:72].ljust(72, b"\0")
+    return (type_guid + unique_guid + struct.pack("<QQQ", first_lba, last_lba, 0) + nm)
+
+
+def _gpt_header(current_lba, backup_lba, first_usable, last_usable,
+                entries_lba, entry_array_crc):
+    """92-byte GPT header (padded to a sector), with self-CRC filled in."""
+    hdr = bytearray(92)
+    struct.pack_into("<8sII", hdr, 0, b"EFI PART", 0x00010000, 92)
+    # bytes 16-19 = header CRC (zero while computing); 20-23 reserved
+    struct.pack_into("<QQQQ", hdr, 24, current_lba, backup_lba, first_usable, last_usable)
+    hdr[56:72] = _DISK_GUID
+    struct.pack_into("<QII", hdr, 72, entries_lba, 128, 128)
+    struct.pack_into("<I", hdr, 88, entry_array_crc)
+    struct.pack_into("<I", hdr, 16, _crc32(bytes(hdr)))       # self CRC over the 92 bytes
+    return bytes(hdr).ljust(SECTOR, b"\0")
+
+
+def _protective_mbr(total_sectors):
+    mbr = bytearray(SECTOR)
+    # single 0xEE protective partition covering the whole disk
+    rec = struct.pack("<B3sB3sII", 0x00, b"\x00\x02\x00", 0xEE, b"\xff\xff\xff",
+                      1, min(total_sectors - 1, 0xFFFFFFFF))
+    mbr[446:446 + 16] = rec
+    mbr[510:512] = b"\x55\xaa"
+    return bytes(mbr)
+
+
+def build_gpt_image(sari_bytes, payload_bytes=b""):
+    """Assemble a GPT SD image: P1=HSS payload, P2='SARI' scene (at SAR_SD_SCENE_LBA).
+    Returns the full disk image bytes. `payload_bytes` may be empty to reserve P1 for a
+    payload flashed later; the SARI scene placement (P2) is independent of it."""
+    if len(payload_bytes) > PAYLOAD_RESERVE_SECTORS * SECTOR:
+        raise ValueError(f"payload {len(payload_bytes)} B exceeds "
+                         f"{PAYLOAD_RESERVE_SECTORS * SECTOR} B reserve")
+    p1_last = P1_FIRST_LBA + PAYLOAD_RESERVE_SECTORS - 1
+    sari_sectors = (len(sari_bytes) + SECTOR - 1) // SECTOR
+    p2_last = P2_FIRST_LBA + sari_sectors - 1
+    backup_hdr_lba = p2_last + 33                # 32-sector entry array + 1 header after P2
+    total_sectors = backup_hdr_lba + 1
+
+    entries = bytearray(128 * 128)               # 128 entries x 128 B
+    entries[0:128] = _gpt_part_entry(HSS_PAYLOAD_TYPE_GUID, _P1_UNIQUE,
+                                     P1_FIRST_LBA, p1_last, "HSS-PAYLOAD")
+    entries[128:256] = _gpt_part_entry(SARI_DATA_TYPE_GUID, _P2_UNIQUE,
+                                       P2_FIRST_LBA, p2_last, "SARI-SCENE")
+    entry_crc = _crc32(bytes(entries))
+
+    primary_hdr = _gpt_header(1, backup_hdr_lba, 34, p2_last, 2, entry_crc)
+    backup_hdr = _gpt_header(backup_hdr_lba, 1, 34, p2_last, backup_hdr_lba - 32, entry_crc)
+
+    img = bytearray(total_sectors * SECTOR)
+    img[0:SECTOR] = _protective_mbr(total_sectors)               # LBA 0
+    img[SECTOR:2 * SECTOR] = primary_hdr                         # LBA 1
+    img[2 * SECTOR:2 * SECTOR + len(entries)] = entries          # LBA 2..33
+    img[P1_FIRST_LBA * SECTOR:P1_FIRST_LBA * SECTOR + len(payload_bytes)] = payload_bytes
+    img[P2_FIRST_LBA * SECTOR:P2_FIRST_LBA * SECTOR + len(sari_bytes)] = sari_bytes
+    img[(backup_hdr_lba - 32) * SECTOR:(backup_hdr_lba - 32) * SECTOR + len(entries)] = entries
+    img[backup_hdr_lba * SECTOR:(backup_hdr_lba + 1) * SECTOR] = backup_hdr
+    return bytes(img)
 
 # role name -> stage filename, in role-id order (index == role id). Mirror of emmc_pack.
 ROLE_FILES = [(name, f"{name}.bin") for name in
@@ -147,25 +246,76 @@ def _selftest():
         dirs = [fake_stage(tmp, "sceneA", 5634, 4319)]
         image, toc = build_sd_image(dirs)
         verify_image(image, toc)
+        # GPT round-trip: SARI at P2, then re-parse the SARI back out of the disk image.
+        sari, toc_g = build_sd_image(dirs, base_lba=P2_FIRST_LBA)
+        disk = build_gpt_image(sari, payload_bytes=b"\xa5" * 4096)
+        _verify_gpt(disk, sari, toc_g)
     print("selftest OK:")
     for t in toc:
         print(f"  scene {t['scene_id']} '{t['name']}': LBA {t['lba']:#x} "
               f"({t['byte_len']/1e6:.1f} MB blob) sig_crc={t['sig_crc']:#010x}")
-    print(f"  image = {len(image)/1e6:.1f} MB, superblock @ LBA 0, all CRCs verified, "
+    print(f"  raw image = {len(image)/1e6:.1f} MB, superblock @ LBA 0, all CRCs verified, "
           f"JOB reconstructs from every TOC entry")
+    print(f"  GPT disk = {len(disk)/1e6:.1f} MB: P1 HSS-payload @ LBA {P1_FIRST_LBA}, "
+          f"P2 SARI-scene @ LBA {P2_FIRST_LBA} (SAR_SD_SCENE_LBA); GPT+SARI CRCs verified")
+
+
+def _verify_gpt(disk, sari, toc):
+    """Confirm the GPT is well-formed (sigs, both header CRCs, partition-array CRC, the
+    HSS payload TypeId, P2 base LBA) and that the SARI scene reads back intact from P2."""
+    assert disk[0x1FE:0x200] == b"\x55\xaa", "no MBR signature"
+    assert disk[446 + 4] == 0xEE, "MBR partition not 0xEE protective"
+    hdr = disk[SECTOR:SECTOR + 92]
+    assert hdr[0:8] == b"EFI PART", "bad GPT signature"
+    got = struct.unpack_from("<I", hdr, 16)[0]
+    assert got == _crc32(hdr[:16] + b"\0\0\0\0" + hdr[20:]), "primary header CRC bad"
+    entries_lba, nent, esz = struct.unpack_from("<QII", hdr, 72)
+    ent = disk[entries_lba * SECTOR: entries_lba * SECTOR + nent * esz]
+    assert struct.unpack_from("<I", hdr, 88)[0] == _crc32(ent), "partition-array CRC bad"
+    assert ent[0:16] == HSS_PAYLOAD_TYPE_GUID, "P1 is not the HSS payload TypeId"
+    p2_first = struct.unpack_from("<Q", ent, 128 + 32)[0]
+    assert p2_first == P2_FIRST_LBA == SAR_SD_SCENE_LBA, "P2 base LBA != SAR_SD_SCENE_LBA"
+    # SARI reads back from P2 exactly, and its TOC still reconstructs.
+    assert disk[p2_first * SECTOR: p2_first * SECTOR + len(sari)] == sari, "SARI corrupt in P2"
+    verify_image(sari, toc, base_lba=P2_FIRST_LBA)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Pack stage dirs -> raw SD-card image (Discovery Kit)")
     ap.add_argument("--stage", action="append", default=[],
                     help="a serialize_inputs.py output dir (repeatable)")
-    ap.add_argument("--out", help="output raw image path (write this to the SD card, LBA 0)")
+    ap.add_argument("--out", help="output raw image path (write this to the SD card)")
+    ap.add_argument("--gpt", action="store_true",
+                    help="emit a GPT SD-boot image (P1=HSS payload, P2=SARI scene) instead of a "
+                         "raw LBA-0 SARI image; required for the HSS SD-boot delivery")
+    ap.add_argument("--payload", help="HSS payload.bin to place in P1 (with --gpt); optional -- "
+                                      "P1 can be flashed separately, P2 (scene) is independent")
     ap.add_argument("--selftest", action="store_true", help="synthetic round-trip, no CPHD/board")
     a = ap.parse_args()
     if a.selftest:
         _selftest(); return
     if not a.stage or not a.out:
         ap.error("need --stage and --out (or --selftest)")
+
+    if a.gpt:
+        sari, toc = build_sd_image(a.stage, base_lba=P2_FIRST_LBA)
+        verify_image(sari, toc, base_lba=P2_FIRST_LBA)
+        payload = Path(a.payload).read_bytes() if a.payload else b""
+        disk = build_gpt_image(sari, payload_bytes=payload)
+        _verify_gpt(disk, sari, toc)
+        Path(a.out).write_bytes(disk)
+        print(f"wrote {a.out}  ({len(disk)/1e6:.1f} MB GPT disk, {len(toc)} scene(s))")
+        print(f"  P1 HSS-payload @ LBA {P1_FIRST_LBA} "
+              f"({'payload '+str(len(payload)//1024)+' KiB' if payload else 'EMPTY - flash payload.bin later'})")
+        print(f"  P2 SARI-scene  @ LBA {P2_FIRST_LBA}  (firmware SAR_SD_SCENE_LBA = {P2_FIRST_LBA})")
+        for t in toc:
+            print(f"    scene {t['scene_id']} '{t['name']}': card LBA {t['lba']:#x} ({t['byte_len']/1e6:.1f} MB)")
+        print("verified: GPT sigs/CRCs, HSS payload TypeId, P2 base LBA, all SARI blob/segment CRCs.")
+        print("\nNext: write this image to a microSD card with a raw imager")
+        print("  (balenaEtcher / Win32DiskImager / `dd if=%s of=/dev/sdX bs=4M`), then" % a.out)
+        print("  insert the card into the Discovery board and power on -> HSS boots the payload.")
+        return
+
     image, toc = build_sd_image(a.stage)
     verify_image(image, toc)
     Path(a.out).write_bytes(image)
