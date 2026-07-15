@@ -62,11 +62,32 @@ HSS path the SD must be GPT-partitioned. Two clean options:
 Decision pending; **A** is preferred (decouples app from scene, matches how HSS expects a data
 partition). This is the main `sd_pack.py` change for the Discovery delivery.
 
-## Sequence to finish the delivery
-1. Fabric timing MET (VERIFYTIMING gate) → fabric bitstream. **(gating step, in progress)**
-2. Build HSS for `mpfs-disco-kit` (recipe above) → `hss.hex`.
-3. Recompile the SAR app against the disco-kit MSS config → `sar_app.bin`; wrap with
-   hss-payload-generator → `payload.bin`.
-4. `sd_pack.py --gpt` → SD image with P1(payload)+P2(SARI scene).
-5. Libero: add HSS `hss.hex` as eNVM client; export the **signed `.job`** (fabric + eNVM).
-6. On-Discovery bring-up: program `.job` once, write SD, power-cycle → HSS boots app → SAR focus.
+## Sequence to finish the delivery — STATUS (2026-07-15)
+1. ✅ **Fabric bitstream DONE + timing-closed.** `mpfs/fpga/libero_disc/export/SAR_TOP_disc.job`
+   (5.75 MB). I/O overflow resolved (stripped MSS to DDR4+FIC_0+MMUART_0+SD; User-I/O 8/80,
+   MSS-I/O 63/102 on dedicated banks). Timing MET @ 62.5 MHz: setup 0 viol, hold 0 viol. Detect
+   kernel needed `CLOCK_PERIOD 2.5` (re-pipelined 26→37 stages) + multi-pass P&R on -1 @ 1.0 V.
+2. ✅ **HSS built for `mpfs-disco-kit`.** `mpfs/fpga/hss/build_hss.sh` (needs `CONFIG_CC_USE_SOFTCONSOLE=y`
+   for the SoftConsole riscv64-unknown-elf gcc 8.3.0). eNVM hex: `mpfs/fpga/hss/out/hss-envm-wrapper.mpfs-disco-kit.hex`.
+   MSS reconciliation: HSS's disco-kit MSS xml is **byte-identical to the stripped fabric MSS** on all
+   DDR/clock/SD/UART params (only disabled peripherals differ, which HSS never touches) — verified.
+3. ⏳ **SAR app → HSS payload (the remaining firmware work).** App exists at
+   `mpfs/fpga/libero_sar/softconsole/mpfs-hal-ddr-demo/` (250T app, eMMC scene-load). Discovery port:
+   - **Scene load eMMC→SD** in `src/sar/sar_emmc.c`: set `cfg.card_type = MSS_MMC_CARD_TYPE_SD`,
+     `data_bus_width = 4BIT` (microSD has 4 data lines SD_DATA0-3), and **remove** the Icicle mux
+     code (GPIO0.12 select for TS3A27518E) — the Discovery wires microSD directly to MSS SDIO
+     (SD→MSSIO_B4), no demux. Keep the `mss_config_clk_rst(MSS_PERIPH_EMMC/SDIO…)` clock-enable and
+     single-block reads. SD is 3.3 V on the Discovery.
+   - **Build as an HSS payload** (not bare-metal eNVM): compile the app for the disco-kit MSS, link at
+     the payload DDR exec addr, emit `sar_app.bin`.
+   - **Wrap** with `tools/hss-payload-generator` (needs a native host gcc — not the RISC-V cross-tool;
+     none found on this PC yet) → `payload.bin`.
+4. ⏳ `sd_pack.py --gpt` → SD image with P1(HSS payload)+P2(SARI scene); app reads scene from P2 LBA.
+5. ⏳ Libero: add `hss-envm-wrapper.mpfs-disco-kit.hex` as eNVM client to the `libero_disc` design;
+   re-export the **`.job`** (fabric + HSS-in-eNVM) as the single delivery artifact.
+6. ⏳ On-Discovery bring-up: program `.job` once, write SD, power-cycle → HSS boots app → SAR focus.
+
+**Done:** the two hardest infrastructure pieces — a **timing-closed fabric bitstream** and a
+**built HSS SD-boot loader** — are complete and committed. Remaining is the cohesive
+firmware/tooling half: the SAR app's SD scene-load port + payload packaging + GPT SD image + eNVM
+bundle. None of it is blocked; the app port (step 3) is the substantial next effort.
