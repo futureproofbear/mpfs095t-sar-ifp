@@ -85,17 +85,21 @@ Source: `github/polarfire-soc/polarfire-soc-discovery-kit-reference-design` (the
 
 ## Workstreams and status
 
+> **▶ 2026-07-15: workstreams ①–⑧ are DONE (board-free build complete). Only ⑨ (on-board) remains.**
+> The plan below is retained for context; the SD path became **GPT SD-boot via HSS** (not raw LBA 0),
+> and the FFT runs on **fabric CoreFFT**.
+
 | # | Workstream | Status | Gated by |
 |---|---|---|---|
-| ① | **SD data-prep script** (`mpfs/host/sd_pack.py`) — CPHD stage → raw `SARI` SD image @ LBA 0 | **DONE + selftest passes** | — |
+| ① | **SD data-prep** (`mpfs/host/sd_pack.py --gpt` + `mkpayload.py`) — CPHD stage → GPT SD-boot image (P1 HSS payload, P2 `SARI` scene @ LBA 67584, OUT @ 657408) | **DONE + selftests pass** | — |
 | ② | **095T repo base** (standalone derivative of the 250T repo) | **DONE** (this repo) | — |
-| ③ | **095T build flow** — Libero project `-die MPFS095T -package FCSG325 -speed -1 -die_voltage 1.0`, DET stripped, ≤2 lanes, 62.5 MHz CCC | TODO (scaffold next) | — (pinout resolved) |
-| ④ | **Discovery FCSG325 pinout `.pdc`** | **DONE** — `mpfs/fpga/constraints/sar_io_discovery.pdc` (from the reference design) | — |
-| ⑤ | **Discovery MSS + LPDDR4 + SD** wired for the SAR datapath — **must ENABLE the microSD** (vendored MSS cfg ships EMMC/SD UNUSED) + FIC0 + DDR map, regen `fpga_design_config` | TODO | Discovery board to verify DDR/SD |
-| ⑥ | **Firmware SD read path** — `sar_sd_load` (card_type=SD, read `SARI`@LBA 0 → DDR role addrs → JOB), mirror of the proven eMMC loader | TODO | ⑤ |
-| ⑦ | **Bitstream build + timing close on 095T** → export `.job` (fabric + eNVM firmware bundled) | **GATED** | ③④ + Libero P&R (~1 h headless) |
-| ⑧ | **Delivery package** — operator runbooks + one-click launcher | **DONE** — `docs/PROGRAM_THE_BOARD.md`, `docs/SD_PROVISIONING.md`, `mpfs/host/program.bat` | the real `.job` waits on ⑦ |
-| ⑨ | **On-silicon bring-up** — DDR train, SD read, run pipeline, verify focused image | **GATED** | Discovery board (colleague side) |
+| ③ | **095T build flow** — Libero `-die MPFS095T -package FCSG325 -speed -1 -die_voltage 1.0`, 62.5 MHz CCC | **DONE** — `create_fresh_project_disc.tcl` + `build_disc.tcl` | — |
+| ④ | **Discovery FCSG325 pinout `.pdc`** | **DONE** — `mpfs/fpga/constraints/sar_io_discovery.pdc` | — |
+| ⑤ | **Discovery MSS + DDR4 + SD** wired for SAR — stripped to DDR4+FIC_0+MMUART_0+SD (unused peripherals disabled to fit FCSG325 I/O), regen `fpga_design_config` | **DONE** — `mss_discovery/DISCOVERY_SAR_MSS.cfg` | — |
+| ⑥ | **Firmware SD read path** — `sar_sd.c` (`card_type=SD`, 4-bit, no Icicle mux; `SARI`@LBA 67584 → DDR → JOB) + autonomous boot (FFTMODE=1 fabric) | **DONE** — commit `83ef8ff` | board to validate runtime |
+| ⑦ | **Bitstream build + timing close on 095T** → export `.job` (fabric + HSS eNVM bundled) | **DONE** — timing MET @62.5 MHz (setup +ve, hold +ve), `mpfs/deliver/sar_top_095t.job` | — |
+| ⑧ | **Delivery package** — operator runbooks + one-click launcher + delivery bundle | **DONE** — `mpfs/deliver/` (`.job` + `program.bat` + `README.md`), `docs/PROGRAM_THE_BOARD.md`, `docs/SD_PROVISIONING.md` | — |
+| ⑨ | **On-Discovery bring-up** — program `.job`, write `--gpt` SD, DDR train, SD read, run pipeline, verify focused image | **PENDING** | Discovery board (colleague/engineer side) |
 
 ## The critical path / risk gates
 

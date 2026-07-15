@@ -2,11 +2,22 @@
 
 > **This repo** is the **MPFS095T / PolarFire SoC Discovery Kit** delivery derivative of
 > `mpfs250t-sar-ifp` (the Icicle/250T dev repo). Same SAR datapath RTL + firmware; retargeted
-> wrapper (device FCSG325, Discovery pinout, microSD storage). Start here:
-> **[`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md)** — plan, status, delivery flow, and the
-> colleague's prerequisite software. SD data prep: `mpfs/host/sd_pack.py`.
+> wrapper (device FCSG325, Discovery pinout, **microSD + HSS SD-boot**). **Self-contained** — no
+> `sarProcessor` checkout needed.
+>
+> **▶ Delivery status (2026-07-15): board-free build COMPLETE.** Fabric bitstream + HSS SD-boot loader
+> are bundled and timing-closed into **[`mpfs/deliver/sar_top_095t.job`](mpfs/deliver/)** (program once
+> with FlashPro Express — no Libero). The FFTs run on the **fabric CoreFFT**. The microSD is a GPT
+> SD-boot card built with `mpfs/host/mkpayload.py` + `mpfs/host/sd_pack.py --gpt` (pure-Python host
+> tools). Remaining work is board-side only (program, write SD, power-on focus run).
+>
+> **Operator path (no build tools):** program `mpfs/deliver/sar_top_095t.job`, write the engineer-supplied
+> `sar_sd.img` to a microSD (≥ ~475 MB), power on. See
+> **[`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md)** + **[`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md)**.
+> **Engineer path / full plan:** **[`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md)** +
+> **[`docs/HSS_INTEGRATION.md`](docs/HSS_INTEGRATION.md)**.
 
-<sub>(Original 250T project README follows.)</sub>
+<sub>(Original 250T project README follows — the SAR datapath, emulator, and validation carry over unchanged.)</sub>
 
 # sarProcessor  ·  origin repo `mpfs250t-sar-ifp`
 

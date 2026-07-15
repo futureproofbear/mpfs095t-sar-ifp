@@ -1,12 +1,23 @@
 # HANDOFF
 
-> **▶ 2026-07-14 status (newest).** This repo is now **standalone `mpfs250t-sar-ifp`** (builds without a
-> sibling `sarProcessor`). The **on-board eMMC pipeline (M1–M3) is proven on silicon** — a CPHD scene is
-> stored on the board eMMC, loaded + focused entirely on-board (`sar_form_image` → SAR_SEQ_OK; focused image
-> confirmed via an ROI crop), and the output persisted back to the card, retiring the recurring ~3 h JTAG
-> scene load. Continue from here: [`docs/PROJECT_SOURCE_OF_TRUTH.md`](docs/PROJECT_SOURCE_OF_TRUTH.md) +
-> [`docs/fpga/SILICON_ISO_TEST_RUNBOOK.md`](docs/fpga/SILICON_ISO_TEST_RUNBOOK.md) § eMMC + the
-> `emmc-onboard-pipeline` skill. Next board task: reflash → LOAD → PIPE → SAVEOUT(commit-last) → VERIFY_OUT → ROIE.
+> **▶ 2026-07-15 status — MPFS095T Discovery Kit delivery (this repo, `mpfs095t-sar-ifp`).**
+> This is the **Discovery Kit (MPFS095T-FCSG325)** SD-boot delivery derivative of the 250T/Icicle work.
+> It is **self-contained** (no `sarProcessor` dependency). **Board-free build is COMPLETE:**
+> - **Fabric bitstream + HSS bundled + timing-closed** → `mpfs/deliver/sar_top_095t.job` (fabric SAR_TOP
+>   with CoreFFT datapath + HSS-in-eNVM SD-boot loader; timing MET @62.5 MHz, User-I/O 8/80). Program once
+>   with FlashPro Express (`mpfs/deliver/program.bat`).
+> - **microSD is GPT SD-boot**: HSS boots from eNVM → loads the SAR app payload (P1) → app loads the `SARI`
+>   scene (P2 @ LBA 67584), sets **FFT engine = fabric CoreFFT (0xB0059110=1)**, focuses, writes the OUT
+>   image back (P3-raw @ LBA 657408, commit-last). Build the card image with
+>   `mkpayload.py` + `sd_pack.py --gpt` (host tools, pure-Python — **no host compiler needed**).
+> - **SAR app SD-boot port done + builds clean** (`mpfs/fpga/sar_app/` → `sar_app.bin` 41 KB @0x1000000000).
+>
+> **What remains is board-side only:** program the `.job`, write a `--gpt` microSD, power on, and confirm the
+> UART reaches `[sar] DONE` (SAR_SEQ_OK, fabric FFT). See [`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md),
+> [`docs/HSS_INTEGRATION.md`](docs/HSS_INTEGRATION.md), [`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md),
+> [`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md). **Colleague needs only this repo's `.job` + docs, plus a
+> `sar_sd.img` the engineer generates** (per-scene, not in git). The SAR *design + verification* reference
+> (proven on 250T silicon) follows below — it carries over unchanged; only the wrapper/board/storage differ.
 
 A clean-handoff summary for a new user. This is target-neutral: it describes the SAR
 image-formation design and its verified state so the work can be continued (or retargeted) from the
