@@ -183,3 +183,8 @@ docs/fpga/SAR_ARCHITECTURE_REPORT.pdf
 mpfs/fpga/libero_disc/
 mpfs/fpga/hls_*/hls_output/
 mpfs/fpga/hss/out/*.elf
+
+# generated per-scene SD image + staged scene (large, not delivered via git)
+scratch_stage/
+/payload.bin
+mpfs/host/payload.bin
