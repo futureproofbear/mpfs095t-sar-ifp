@@ -22,6 +22,102 @@
 #include "../../sar/sar_emmc.h"         /* sar_emmc_selftest() -- Milestone-1 eMMC round trip */
 #endif
 
+#ifdef SAR_SD_BOOT
+/* ==========================================================================
+ * Discovery Kit (MPFS095T) AUTONOMOUS microSD HSS-payload boot.
+ *
+ * There is no JTAG/gdb and no mailbox in the field: HSS trains DDR, loads this
+ * payload to DDR and jumps directly to u54_1 (the owner hart -- so NO E51 soft-
+ * interrupt wake to wait on). This path runs the whole pipeline on its own:
+ *   init MMUART0 console -> set FFTMODE=1 (fabric CoreFFT) -> init microSD ->
+ *   load scene 'SARI' from SD P2 -> sar_form_image() -> persist OUT back to SD.
+ * Machine interrupts stay OFF (single-block synchronous SDMMC; SDMA hangs here).
+ * ========================================================================== */
+#include "drivers/mss/mss_mmuart/mss_uart.h"   /* MMUART_0 console */
+#include "../../sar/sar_sd.h"                   /* SD scene load + save */
+
+/* Sequencer runtime knobs (host set these over gdb in the Icicle flow; at SD
+ * boot the DDR words are uninitialized, so the shipped path must set them). */
+#define SAR_FFTMODE_ADDR      0xB0059110u   /* 1 = fabric CoreFFT chain (REQUIRED) */
+#define SAR_FFT_HEADROOM_ADDR 0xB0059114u   /* extra renormalize shift (0 = none) */
+#define SAR_DETECTMODE_ADDR   0xB0059118u   /* 0 = CPU detect (correct, SHIPPING path) */
+
+static void sd_puts(const char *s)
+{ MSS_UART_polled_tx_string(&g_mss_uart0_lo, (const uint8_t *)s); }
+static void sd_puthex(uint32_t v)
+{
+    char b[11] = "0x00000000";
+    for (int i = 0; i < 8; i++) {
+        uint32_t nib = (v >> ((7 - i) * 4)) & 0xFu;
+        b[2 + i] = (char)(nib < 10u ? ('0' + nib) : ('A' + nib - 10u));
+    }
+    sd_puts(b);
+}
+
+/* Print a labelled verdict, then park forever (used on a fatal boot-stage fail). */
+static void sd_die(const char *stage, uint32_t code)
+{
+    sd_puts("[sar] FAIL ");
+    sd_puts(stage);
+    sd_puts(" = ");
+    sd_puthex(code);
+    sd_puts("\r\n");
+    for (;;) { ; }
+}
+
+void u54_1(void)
+{
+    /* HSS started this hart directly -- do NOT wait for an E51 soft interrupt.
+     * Mask async interrupts: the SDMMC single-block path is synchronous and
+     * SDMA completion is ISR-driven, which would hang with MIE disabled. */
+    clear_csr(mstatus, MSTATUS_MIE);
+    write_csr(mie, 0);
+
+    /* MMUART_0 console (E51 does not run under HSS, so enable its clock here). */
+    (void)mss_config_clk_rst(MSS_PERIPH_MMUART0, (uint8_t)read_csr(mhartid), PERIPHERAL_ON);
+    MSS_UART_init(&g_mss_uart0_lo, MSS_UART_115200_BAUD,
+                  MSS_UART_DATA_8_BITS | MSS_UART_NO_PARITY | MSS_UART_ONE_STOP_BIT);
+    sd_puts("\r\n[sar] Discovery microSD autonomous boot\r\n");
+
+    /* FFT engine = FABRIC CoreFFT (hard requirement). Write 1 UNCONDITIONALLY;
+     * there is no CPU-FFT fallback in the shipped path. Also pin the other two
+     * sequencer knobs the JTAG flow set: headroom 0 and CPU detect (0 = the
+     * correct shipping detect; the fabric detect HLS mis-synthesizes signs). */
+    *(volatile uint32_t *)(uintptr_t)SAR_FFTMODE_ADDR      = 1u;   /* fabric FFT */
+    *(volatile uint32_t *)(uintptr_t)SAR_FFT_HEADROOM_ADDR = 0u;
+    *(volatile uint32_t *)(uintptr_t)SAR_DETECTMODE_ADDR   = 0u;   /* CPU detect */
+    __asm volatile ("fence rw, rw");
+    sd_puts("[sar] FFTMODE=1 (fabric CoreFFT)\r\n");
+
+    /* microSD bring-up (SD, 4-bit, 3.3 V, no Icicle mux). */
+    sd_puts("[sar] init microSD... ");
+    mss_mmc_status_t mst = sar_sd_init();
+    if (mst != MSS_MMC_INIT_SUCCESS) sd_die("sd_init", (uint32_t)mst);
+    sd_puts("ok\r\n");
+
+    /* Load scene 0 ('SARI' superblock at GPT P2 base) into the DDR role addrs. */
+    sd_puts("[sar] load scene from SD (P2)... ");
+    uint32_t lv = sar_sd_load_scene(0u);
+    if (lv != SAR_SD_PASS) sd_die("sd_load", lv);
+    sd_puts("ok\r\n");
+
+    /* Run the full PFA focus pipeline (fabric kernels + fabric FFT). */
+    sd_puts("[sar] focus pipeline... ");
+    sar_seq_status_t s = sar_form_image(0u);
+    if (s != SAR_SEQ_OK) sd_die("form_image", (uint32_t)s);
+    sd_puts("ok\r\n");
+
+    /* Persist the focused image back to SD (commit-last SAVEOUT). */
+    sd_puts("[sar] save OUT to SD... ");
+    uint32_t sv = sar_sd_save_out((uint32_t)SAR_GRID_MAX, (uint32_t)SAR_GRID_MAX, 0u, 1u);
+    if (sv != SAR_SD_PASS) sd_die("sd_save", sv);
+    sd_puts("ok\r\n[sar] DONE\r\n");
+
+    for (;;) { ; }
+}
+
+#else  /* !SAR_SD_BOOT : Icicle JTAG/mailbox register-verification harness (unchanged) */
+
 #define MSS_SYSREG_BASE  0x20002000u    /* always-responsive MSS regs (no fabric dependency) */
 #define SUBBLK_CLOCK_CR  (MSS_SYSREG_BASE + 0x84u)  /* bit24-27 = FIC0-3 clock enable */
 #define SOFT_RESET_CR    (MSS_SYSREG_BASE + 0x88u)  /* bit24-27 = FIC0-3 reset (1=held) */
@@ -480,3 +576,5 @@ void u54_1(void)
         }
     }
 }
+
+#endif /* SAR_SD_BOOT */

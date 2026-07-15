@@ -1,0 +1,16 @@
+# HSS payload manifest for the SAR app (Discovery Kit microSD autonomous boot).
+# Consumed by hart-software-services/tools/hss-payload-generator:
+#   hss-payload-generator -c sar_app.yaml payload.bin
+# (the generator needs a NATIVE host gcc, not the RISC-V cross-tool.)
+#
+# exec-addr MUST match the app link address (sar_app.ld SECTION_START_ADDRESS =
+# 0x1000000000) and the readelf entry point of Default/sar_app.elf.
+# owner-hart u54_1: HSS starts ONLY hart 1 at exec-addr (mss_sw_config sets
+# MPFS_HAL_FIRST_HART = MPFS_HAL_LAST_HART = 1); the app runs autonomously there.
+set-name: 'sar-app'
+hart-entry-points: {u54_1: '0x1000000000'}
+payloads:
+  Default/sar_app.bin:
+    exec-addr: '0x1000000000'
+    owner-hart: u54_1
+    priv-mode: prv_m

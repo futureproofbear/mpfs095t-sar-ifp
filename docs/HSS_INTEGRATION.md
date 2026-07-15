@@ -47,7 +47,12 @@ payloads:
 The SAR app binary is the existing u54 firmware (the same pipeline proven on the 250T eMMC M3 path),
 recompiled against the disco-kit MSS config.
 
-## Open design decision — SD layout (GPT) vs current sd_pack.py
+## SD layout (GPT) vs current sd_pack.py — RESOLVED: option A
+`sd_pack.py --gpt` is done (P1 = HSS payload, P2 = 'SARI' scene at fixed LBA 67584 = the app's
+`SAR_SD_SCENE_LBA`). The app reads the scene from P2; output-persist (P3) LBA is still to be pinned.
+Original analysis retained below.
+
+### (original) Open design decision — SD layout (GPT) vs current sd_pack.py
 `sd_pack.py` today writes a **raw `SARI` superblock at LBA 0**, which **collides with a GPT**. For the
 HSS path the SD must be GPT-partitioned. Two clean options:
 
@@ -71,17 +76,24 @@ partition). This is the main `sd_pack.py` change for the Discovery delivery.
    for the SoftConsole riscv64-unknown-elf gcc 8.3.0). eNVM hex: `mpfs/fpga/hss/out/hss-envm-wrapper.mpfs-disco-kit.hex`.
    MSS reconciliation: HSS's disco-kit MSS xml is **byte-identical to the stripped fabric MSS** on all
    DDR/clock/SD/UART params (only disabled peripherals differ, which HSS never touches) — verified.
-3. ⏳ **SAR app → HSS payload (the remaining firmware work).** App exists at
-   `mpfs/fpga/libero_sar/softconsole/mpfs-hal-ddr-demo/` (250T app, eMMC scene-load). Discovery port:
-   - **Scene load eMMC→SD** in `src/sar/sar_emmc.c`: set `cfg.card_type = MSS_MMC_CARD_TYPE_SD`,
-     `data_bus_width = 4BIT` (microSD has 4 data lines SD_DATA0-3), and **remove** the Icicle mux
-     code (GPIO0.12 select for TS3A27518E) — the Discovery wires microSD directly to MSS SDIO
-     (SD→MSSIO_B4), no demux. Keep the `mss_config_clk_rst(MSS_PERIPH_EMMC/SDIO…)` clock-enable and
-     single-block reads. SD is 3.3 V on the Discovery.
-   - **Build as an HSS payload** (not bare-metal eNVM): compile the app for the disco-kit MSS, link at
-     the payload DDR exec addr, emit `sar_app.bin`.
-   - **Wrap** with `tools/hss-payload-generator` (needs a native host gcc — not the RISC-V cross-tool;
-     none found on this PC yet) → `payload.bin`.
+3. ✅ **SAR app → HSS payload (firmware done, board-free).** Built cleanly at
+   `mpfs/fpga/sar_app/` (`build_sar_app.sh` → `Default/sar_app.elf` + `sar_app.bin`, 41 KB raw;
+   text 37 KB / bss 133 KB). Details:
+   - **Scene load eMMC→SD**: new `src/sar/sar_sd.c` (`sar_sd_init/load_scene/save_out`) mirrors the
+     eMMC M3 path but `card_type = MSS_MMC_CARD_TYPE_SD`, `data_bus_width = 4BIT`, `3.3 V`, and **no**
+     Icicle GPIO0.12 mux (Discovery wires SD directly to MSS SDIO). Keeps the
+     `mss_config_clk_rst(MSS_PERIPH_EMMC…)` clock-enable + single-block synchronous reads. Scene
+     'SARI' superblock read at `SAR_SD_SCENE_LBA = 67584` (GPT P2 base, pinned by `sd_pack.py --gpt`);
+     TOC carries absolute card LBAs. FIC0 non-coherence handled with `flush_l2_cache` per transfer.
+   - **Autonomous boot**: `u54_1.c` `#ifdef SAR_SD_BOOT` runs init SD → **FFTMODE=1 (fabric CoreFFT,
+     written unconditionally at 0xB0059110)** → load scene → `sar_form_image` → save OUT, logging over
+     MMUART_0. The Icicle JTAG/mailbox harness is preserved under `#else` (unchanged).
+   - **HSS payload build**: linked at DDR exec addr **`0x1000000000`** (`sar_app.ld`; aliases the
+     32-bit `0x80000000` window on the disco SEG config, so app code sits in DDR phys [0,128 MiB),
+     clear of SIG@`0x88000000`). Payload MSS config `mpfs/fpga/sar_app/config` sets
+     `MPFS_HAL_FIRST_HART = LAST_HART = 1` + `IMAGE_LOADED_BY_BOOTLOADER = 1` (no re-train of HSS's DDR).
+   - **Wrap** with `tools/hss-payload-generator` (manifest `mpfs/fpga/sar_app/sar_app.yaml`; needs a
+     native host gcc — none on this PC yet) → `payload.bin`. Board validation of runtime still pending.
 4. ⏳ `sd_pack.py --gpt` → SD image with P1(HSS payload)+P2(SARI scene); app reads scene from P2 LBA.
 5. ⏳ Libero: add `hss-envm-wrapper.mpfs-disco-kit.hex` as eNVM client to the `libero_disc` design;
    re-export the **`.job`** (fabric + HSS-in-eNVM) as the single delivery artifact.
