@@ -26,13 +26,13 @@
  * Coordinated constant -- keep in lock-step with sd_pack.py SAR_SD_SCENE_LBA. */
 #define SAR_SD_SCENE_LBA   67584u
 
-/* Output region base LBA (commit-last SAVEOUT target). OPEN COORDINATION ITEM:
- * sd_pack.py currently lays down P1 (payload) + P2 (SARI scene) only; a reserved
- * output region / partition (P3) at this LBA must be pinned in sd_pack.py before
- * on-card save is exercised -- exactly parallel to SAR_SD_SCENE_LBA. Placeholder
- * chosen well past any P2 scene; the value is board-side, not a build constraint. */
+/* Output region base LBA (commit-last SAVEOUT target). PINNED by sd_pack.py:
+ * SAR_SD_OUT_LBA = P2_FIRST_LBA + P2_MAX_RESERVE (32 MiB payload + 288 MiB scene reserve).
+ * The 128 MiB focused OUT image (8192^2 uint16) + SARO superblock live here in raw card
+ * space past the scene -- NOT a GPT partition (the board writes raw single blocks). Keep in
+ * lock-step with sd_pack.py SAR_SD_OUT_LBA. Card must be >= ~475 MB (sd_pack MIN_CARD). */
 #ifndef SAR_SD_OUT_LBA
-#define SAR_SD_OUT_LBA     0x2000000u   /* 16 GiB-in reserve; pin in sd_pack.py P3 */
+#define SAR_SD_OUT_LBA     657408u   /* = 67584 (P2) + 589824 (288 MiB scene reserve) */
 #endif
 
 /* verdict / fail codes (compact, SD-local). */

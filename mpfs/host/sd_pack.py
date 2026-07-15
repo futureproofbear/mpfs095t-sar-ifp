@@ -48,6 +48,17 @@ PAYLOAD_RESERVE_SECTORS = 65536                 # 32 MiB reserved for the payloa
 P2_FIRST_LBA = P1_FIRST_LBA + PAYLOAD_RESERVE_SECTORS   # = 67584 -> app's SAR_SD_SCENE_LBA
 SAR_SD_SCENE_LBA = P2_FIRST_LBA                 # firmware constant: where the SARI superblock is
 
+# Output persist region. The focused OUT image is ALWAYS 128 MiB (8192^2 uint16, rows=cols=
+# SAR_GRID_MAX). We put it at a FIXED raw card LBA past the scene's maximum footprint, so the
+# firmware can hard-code SAR_SD_OUT_LBA to match (parallel to SAR_SD_SCENE_LBA). It is NOT a GPT
+# partition: HSS only needs P1, the app reads P2 by fixed LBA and writes OUT by fixed LBA (raw
+# single-block writes). Keeping the disk image compact (ends after the actual scene) while the
+# output lives in raw card space beyond it -- the card just has to be big enough (MIN_CARD_BYTES).
+P2_MAX_RESERVE_SECTORS = 589824                 # 288 MiB: SIG max 256 MiB + geometry + headroom
+SAR_SD_OUT_LBA = P2_FIRST_LBA + P2_MAX_RESERVE_SECTORS   # = 657408 -> app's SAR_SD_OUT_LBA
+OUT_RESERVE_SECTORS = 270336                    # 132 MiB: OUT image (128 MiB) + SARO super + margin
+MIN_CARD_SECTORS = SAR_SD_OUT_LBA + OUT_RESERVE_SECTORS  # smallest usable microSD (~449 MiB)
+
 # HSS payload partition TYPE GUID -- matched byte-for-byte to hart-software-services
 # services/boot/gpt.c: {data1=0x21686148, data2=0x6449, data3=0x6E6F, data4=0x4946456465654e74}.
 # HSS reads the on-disk 16 bytes into {u32,u16,u16,u64} on a little-endian hart, so we emit
@@ -106,6 +117,9 @@ def build_gpt_image(sari_bytes, payload_bytes=b""):
                          f"{PAYLOAD_RESERVE_SECTORS * SECTOR} B reserve")
     p1_last = P1_FIRST_LBA + PAYLOAD_RESERVE_SECTORS - 1
     sari_sectors = (len(sari_bytes) + SECTOR - 1) // SECTOR
+    if P2_FIRST_LBA + sari_sectors > SAR_SD_OUT_LBA:
+        raise ValueError(f"SARI scene {len(sari_bytes)/1e6:.1f} MB overruns the output region at "
+                         f"LBA {SAR_SD_OUT_LBA} (scene reserve {P2_MAX_RESERVE_SECTORS*SECTOR/1e6:.0f} MB)")
     p2_last = P2_FIRST_LBA + sari_sectors - 1
     backup_hdr_lba = p2_last + 33                # 32-sector entry array + 1 header after P2
     total_sectors = backup_hdr_lba + 1
@@ -258,6 +272,8 @@ def _selftest():
           f"JOB reconstructs from every TOC entry")
     print(f"  GPT disk = {len(disk)/1e6:.1f} MB: P1 HSS-payload @ LBA {P1_FIRST_LBA}, "
           f"P2 SARI-scene @ LBA {P2_FIRST_LBA} (SAR_SD_SCENE_LBA); GPT+SARI CRCs verified")
+    print(f"  OUT @ LBA {SAR_SD_OUT_LBA} (SAR_SD_OUT_LBA), min card {MIN_CARD_SECTORS*SECTOR/1e6:.0f} MB; "
+          f"scene/output overlap guard active")
 
 
 def _verify_gpt(disk, sari, toc):
@@ -310,6 +326,10 @@ def main():
         print(f"  P2 SARI-scene  @ LBA {P2_FIRST_LBA}  (firmware SAR_SD_SCENE_LBA = {P2_FIRST_LBA})")
         for t in toc:
             print(f"    scene {t['scene_id']} '{t['name']}': card LBA {t['lba']:#x} ({t['byte_len']/1e6:.1f} MB)")
+        print(f"  OUT region     @ LBA {SAR_SD_OUT_LBA}  (firmware SAR_SD_OUT_LBA; 128 MiB focused "
+              f"image, written on-board -- raw space beyond the image)")
+        print(f"  minimum microSD size: {MIN_CARD_SECTORS*SECTOR/1e6:.0f} MB "
+              f"({MIN_CARD_SECTORS} sectors) -- any modern card is fine")
         print("verified: GPT sigs/CRCs, HSS payload TypeId, P2 base LBA, all SARI blob/segment CRCs.")
         print("\nNext: write this image to a microSD card with a raw imager")
         print("  (balenaEtcher / Win32DiskImager / `dd if=%s of=/dev/sdX bs=4M`), then" % a.out)

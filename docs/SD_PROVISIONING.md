@@ -30,19 +30,29 @@ Only if you want a scene other than the shipped one.
    python mpfs/host/serialize_inputs.py --in <scene>.cphd --grid 8192 --deci <D> --out jtag_stage
    ```
    (`--deci` decimates so the capture fits the 8192 grid; a full-res 8192-native scene uses `--deci 1`.)
-3. Pack the stage dir into a raw SD image:
+3. Pack the stage dir + the HSS payload into a **GPT SD-boot image**:
    ```
-   python mpfs/host/sd_pack.py --stage jtag_stage --out sar_sd.img
+   python mpfs/host/mkpayload.py --app mpfs/fpga/sar_app/Default/sar_app.bin \
+       --exec 0x1000000000 --out payload.bin
+   python mpfs/host/sd_pack.py --gpt --payload payload.bin --stage jtag_stage --out sar_sd.img
    ```
-   It self-verifies (all CRCs, JOB reconstructs) and prints the card LBAs.
+   `sd_pack.py --gpt` self-verifies (GPT CRCs, HSS payload TypeId, all scene CRCs) and prints the
+   partition LBAs + the **minimum microSD size** (~475 MB; any modern card is fine).
 4. Write `sar_sd.img` to the card as in **Path A**.
 
 ## How the addressing works (for reference)
-`sd_pack.py` produces a self-describing image: a **`SARI` superblock at LBA 0** with a table of
-contents, then one **blob per scene** (SIG signal + geometry tables). Each TOC entry carries the
-scene's absolute card LBA + the metadata the board needs; the board reconstructs its job descriptor
-from the TOC and DMAs each segment to its fixed DDR address. You never compute addresses by hand —
-the image is written from LBA 0 and the board finds everything from the superblock.
+The card is **GPT-partitioned** for HSS SD-boot:
+- **P1 @ LBA 2048** — the HSS payload (the SAR app). HSS finds it by its payload Type-GUID, loads
+  it into DDR, and jumps to it.
+- **P2 @ LBA 67584** (`SAR_SD_SCENE_LBA`) — a `SARI` superblock + one blob per scene (SIG signal +
+  geometry tables). Each TOC entry carries the scene's absolute card LBA; the app reconstructs its
+  job descriptor from the TOC and DMAs each segment to its fixed DDR address.
+- **OUT @ LBA 657408** (`SAR_SD_OUT_LBA`) — raw space past the scene where the board writes the
+  focused 128 MiB image back (commit-last: it invalidates the `SARO` magic, writes the image, then
+  writes the superblock last, so a power cut mid-write leaves a rejected torn image, not a bad one).
+
+You never compute addresses by hand — the engineer's tools pin these LBAs and the firmware matches
+them; the operator just writes the whole image from LBA 0.
 
 ## Verify (optional)
-`sd_pack.py --selftest` runs a synthetic round-trip (no card) to confirm the tool is working.
+`sd_pack.py --selftest` runs a synthetic GPT + scene round-trip (no card) to confirm the tool works.
