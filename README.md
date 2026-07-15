@@ -1,105 +1,185 @@
-# SAR image former — MPFS095T / Discovery Kit delivery (`mpfs095t-sar-ifp`)
+# SAR image former — PolarFire SoC Discovery Kit (`mpfs095t-sar-ifp`)
 
-> **This repo** is the **MPFS095T / PolarFire SoC Discovery Kit** delivery derivative of
-> `mpfs250t-sar-ifp` (the Icicle/250T dev repo). Same SAR datapath RTL + firmware; retargeted
-> wrapper (device FCSG325, Discovery pinout, **microSD + HSS SD-boot**). **Self-contained** — no
-> `sarProcessor` checkout needed.
->
-> **▶ Delivery status (2026-07-15): board-free build COMPLETE.** Fabric bitstream + HSS SD-boot loader
-> are bundled and timing-closed into **[`mpfs/deliver/sar_top_095t.job`](mpfs/deliver/)** (program once
-> with FlashPro Express — no Libero). The FFTs run on the **fabric CoreFFT**. The microSD is a GPT
-> SD-boot card built with `mpfs/host/mkpayload.py` + `mpfs/host/sd_pack.py --gpt` (pure-Python host
-> tools). Remaining work is board-side only (program, write SD, power-on focus run).
->
-> **Operator path (no build tools):** program `mpfs/deliver/sar_top_095t.job`, write the engineer-supplied
-> `sar_sd.img` to a microSD (≥ ~475 MB), power on. See
-> **[`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md)** + **[`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md)**.
-> **Engineer path / full plan:** **[`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md)** +
-> **[`docs/HSS_INTEGRATION.md`](docs/HSS_INTEGRATION.md)**.
+A spotlight-mode **Synthetic Aperture Radar image-formation processor**: it turns an Umbra
+open-data CPHD (radar phase history) into a focused magnitude image, running on a **PolarFire SoC
+Discovery Kit (MPFS095T-FCSG325)**. The FPGA fabric does the FFTs (CoreFFT) and the
+resample/window/detect/corner-turn kernels; the RISC-V cores drive the pipeline. It boots and runs
+**standalone from a microSD card** — no JTAG, no host link at run time.
 
-<sub>(Original 250T project README follows — the SAR datapath, emulator, and validation carry over unchanged.)</sub>
+This repo is **self-contained**: it is the Discovery-Kit SD-boot delivery derivative of the
+`mpfs250t-sar-ifp` (Icicle / MPFS250T) development repo. Same SAR datapath, retargeted wrapper. You
+do **not** need any sibling checkout.
 
-# sarProcessor  ·  origin repo `mpfs250t-sar-ifp`
+---
 
-> **▶ 2026-07-14 status (newest — supersedes the status note below for repo layout + eMMC).**
-> This repo is now **standalone `mpfs250t-sar-ifp`** — it builds and runs on its own, no sibling
-> `sarProcessor` checkout needed. The **on-board eMMC pipeline (M1–M3) is proven on silicon**: a CPHD scene
-> is stored on the board eMMC, loaded eMMC→DDR (~63 s, retiring the ~3 h JTAG scene load) and focused
-> on-board (`sar_form_image` → SAR_SEQ_OK; focused image confirmed via an ROI crop), and the output is
-> persisted back to the card. Current status + recipe:
-> [`docs/PROJECT_SOURCE_OF_TRUTH.md`](docs/PROJECT_SOURCE_OF_TRUTH.md) and
-> [`docs/fpga/SILICON_ISO_TEST_RUNBOOK.md`](docs/fpga/SILICON_ISO_TEST_RUNBOOK.md) § eMMC M1/M2/M3. See also
-> [`docs/AI_FABRIC_FIRMWARE_FRAMEWORK.md`](docs/AI_FABRIC_FIRMWARE_FRAMEWORK.md) (AI-assisted workflow).
+## Status (2026-07-15)
 
-SAR image formation from **Umbra CPHD** (compensated phase history data), in two
-implementations:
+**The board-free build is COMPLETE.** Everything that can be built without the physical board is done,
+committed, and timing-closed:
 
-1. **Laptop reference** (`src/form_image_pfa.py`) — downloads a public Umbra
-   open-data CPHD, focuses it with the Polar Format Algorithm, and writes a
-   detected, geocoded GeoTIFF. This is the golden reference.
-2. **On-silicon SAR processor** (`mpfs/`) — the same pipeline running on a
-   **PolarFire SoC** FPGA (MPFS250T_ES / Icicle Kit): keystone resample, window,
-   range FFT, corner-turn, azimuth FFT, and detection, streaming DDR-to-DDR.
-   Range/azimuth FFTs run on the fabric **CoreFFT**; the MSS RISC-V cores drive
-   the pipeline and do the final detect.
+- ✅ **Fabric bitstream + HSS SD-boot loader** — bundled and timing-closed into a single signed
+  programming job, [`mpfs/deliver/sar_top_095t.job`](mpfs/deliver/). Program once with FlashPro
+  Express. No Libero build needed.
+- ✅ **SAR app firmware** — ported to SD-boot and built; ships **prebuilt** as
+  [`mpfs/deliver/payload.bin`](mpfs/deliver/payload.bin) (43 KB). You do **not** compile firmware.
+- ✅ **Pure-Python microSD tooling** — turn a CPHD scene into a bootable card image with no compiler.
 
-**Status:** the full deci-1 Centerfield scene has been focused **end-to-end on
-silicon** (RETURN=0, ~162 s), and the 8192² image reconstructed from DDR matches
-the reference scene-for-scene (river, field parcels, pivot-irrigation circles,
-roads) — ~0.97 correlation on the decimated scene, speckle-limited at full
-single-look resolution. See [`docs/fpga/SAR_ARCHITECTURE_REPORT.md`](docs/fpga/SAR_ARCHITECTURE_REPORT.md)
-for the architecture, per-stage fabric resource usage, and validation results.
+**What remains is board-side only:** program the `.job`, write a microSD, power on, and confirm the
+UART reaches `[sar] DONE`. The underlying SAR datapath is already **proven on 250T silicon** (focused
+image, corr ~0.97 vs golden; phase-exact fabric FFT) — see [HANDOFF.md](HANDOFF.md).
 
-## Layout
+---
+
+## Taking over this project? Start here
+
+Read these two files first, in order:
+
+1. **This README** — what the project is, the repo map, and how to generate the microSD image.
+2. **[HANDOFF.md](HANDOFF.md)** — the SAR *design* and its *verified state* (what is proven on silicon,
+   what is open/next). This is the engineering handoff.
+
+Then pick your role:
+
+| You are… | Your goal | Follow |
+|----------|-----------|--------|
+| **Operator** | Program a board + run a scene | Program the `.job`, then write a microSD (below). No build tools. |
+| **Engineer** | Change the design, rebuild, or debug on silicon | [HANDOFF.md](HANDOFF.md) → [`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md) → the runbooks in [`docs/fpga/`](docs/fpga/). Start the Claude Code session with the `project-orientation` skill. |
+
+Everything the board needs is in [`mpfs/deliver/`](mpfs/deliver/): the programming job, the launcher,
+the prebuilt app payload, and its README.
+
+---
+
+## Repository map
 
 ```
-sarProcessor/
+mpfs095t-sar-ifp/
+├── README.md            ← you are here (start here)
+├── HANDOFF.md           ← SAR design + verified state (read second)
+├── CLAUDE.md            ← engineering discipline for this repo
+├── mpfs/
+│   ├── deliver/         ← THE DELIVERY: sar_top_095t.job, program.bat, payload.bin
+│   ├── host/            ← pure-Python host tools (build the SD image, emulator, dumps)
+│   └── fpga/            ← Libero design, HLS kernels, SAR app source (engineer only)
 ├── src/
-│   └── form_image_pfa.py     # laptop PFA pipeline (download → focus → detect → geocode)
-├── mpfs/                      # PolarFire SoC implementation
-│   ├── fpga/                  # Libero design, HLS kernels (resample/window/detect), CoreFFT feeder
-│   └── host/                  # JTAG load/run/dump scripts + bit-accurate silicon emulator
-│       ├── silicon_emulator.py    # fixed-point mirror of the on-silicon datapath (== golden)
-│       ├── stitch_silicon_deci1.py# reconstruct + correlate the dumped 8192² OUT
-│       └── render_quarters.py      # per-quarter / stitched image render of silicon OUT
-├── docs/
-│   └── fpga/                  # architecture report, runbooks, silicon test procedures
-├── data/                      # local mirror of the Umbra S3 bucket layout (git-ignored)
-└── output/                    # generated products (images, .npy — git-ignored)
+│   └── form_image_pfa.py  ← laptop golden reference (download CPHD → focus → GeoTIFF)
+├── docs/                ← all documentation (index below)
+├── reference/           ← vendor IP user guides, datasheets
+└── .claude/             ← Claude Code skills + agents (accumulated project knowledge)
 ```
 
-Paths are anchored to the project root, so scripts run the same from any working
-directory.
+### Documentation index
 
-## Run — laptop reference
+The `docs/` tree is large; you do not need all of it. The ones that matter, grouped:
 
+| To… | Read |
+|-----|------|
+| **Generate the microSD `.img`** | [`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md) (full detail; recipe also below) |
+| **Program the board** | [`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md) |
+| Understand the Discovery-Kit port + boot flow | [`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md), [`docs/HSS_INTEGRATION.md`](docs/HSS_INTEGRATION.md) |
+| Understand the SAR architecture + validation | [`docs/fpga/SAR_ARCHITECTURE_REPORT.md`](docs/fpga/SAR_ARCHITECTURE_REPORT.md) |
+| Rebuild the fabric / bring up on silicon (engineer) | [`docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md`](docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md), [`docs/fpga/SILICON_ISO_TEST_RUNBOOK.md`](docs/fpga/SILICON_ISO_TEST_RUNBOOK.md), [`docs/fpga/SMARTDEBUG_RUNBOOK.md`](docs/fpga/SMARTDEBUG_RUNBOOK.md) |
+| Find the authoritative status / avoid re-deriving | [`docs/PROJECT_SOURCE_OF_TRUTH.md`](docs/PROJECT_SOURCE_OF_TRUTH.md) |
+
+---
+
+## Run the delivery: two steps
+
+### 1. Program the board (once)
+
+Run [`mpfs/deliver/program.bat`](mpfs/deliver/program.bat) (or open `sar_top_095t.job` in **FlashPro
+Express** and hit RUN). Needs only the free FlashPro Express tool + a FlashPro programmer. Details:
+[`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md).
+
+### 2. Generate the microSD image (`sar_sd.img`)
+
+The board reads its scene from a **GPT-partitioned microSD**: P1 = the prebuilt SAR app, P2 = the
+scene (from a CPHD), plus a reserved region where the board writes the focused image back. You build
+that card image on a PC with the pure-Python tools in this repo — **no firmware build, no SoftConsole,
+no Libero.**
+
+**Prerequisites (once):**
+```bash
+pip install numpy sarpy          # add scipy if prompted
+```
+
+**Step A — get a CPHD scene.** Any Umbra open-data spotlight `CPHD.cphd` works — the exact scene is
+**not required** to run the system; a specific one is only needed to reproduce the shipped reference
+image. Catalog: `s3://umbra-open-data-catalog` (us-west-2, anonymous HTTPS — no AWS account), layout
+`sar-data/tasks/<task>/<uuid>/<timestamp>_UMBRA-NN/`.
+
+The **exact scene the shipped image was built from** (download this to reproduce it):
+```
+https://umbra-open-data-catalog.s3.us-west-2.amazonaws.com/sar-data/tasks/North+Dakota+State+University+Plot/8d5a3c80-a3dc-47b2-bf31-f3921b8c0f39/2023-11-10-16-16-44_UMBRA-04/2023-11-10-16-16-44_UMBRA-04_CPHD.cphd
+```
+| field | value |
+|-------|-------|
+| task | `North Dakota State University Plot` |
+| uuid | `8d5a3c80-a3dc-47b2-bf31-f3921b8c0f39` |
+| capture | `2023-11-10-16-16-44_UMBRA-04` |
+| native dims | 8167 pulses × ~9000 samples → stage with `--deci-sample 2` (below) |
+
+**Step B — stage the CPHD into pipeline inputs.** The pipeline grids to a fixed 8192×8192, so both
+capture dimensions must be ≤ 8192. For the NDSU scene above the sample axis is ~9000 (> 8192), so
+decimate it by 2:
+```bash
+python mpfs/host/serialize_inputs.py --in 2023-11-10-16-16-44_UMBRA-04_CPHD.cphd --grid 8192 \
+    --deci-pulse 1 --deci-sample 2 --out jtag_stage
+```
+If it errors `scene MxN exceeds GRID_MAX 8192`, raise decimation on the offending axis until both fit
+(`--deci-pulse` = pulse/azimuth axis, `--deci-sample` = sample/range axis). It prints the final dims
+and a geometry self-check (`corr≈1.000` = good).
+
+> **Why decimate, not crop to 8192?** The CPHD axes are *phase history* (pulses × frequency samples),
+> not image pixels — cropping them does **not** crop the output to a sub-scene; it uniformly shrinks
+> the aperture/bandwidth and degrades focus over the *whole* image. Decimation (uniform downsample)
+> keeps the entire scene in frame at coarser resolution, which is why the tool only offers `--deci-*`
+> and no crop knob.
+
+**Step C — pack the bootable card image** (prebuilt payload + your staged scene):
+```bash
+python mpfs/host/sd_pack.py --gpt --payload mpfs/deliver/payload.bin \
+    --stage jtag_stage --out sar_sd.img
+```
+It self-verifies (GPT signatures/CRCs, payload GUID, every scene-blob CRC) and prints the minimum
+microSD size (~475 MB).
+
+**Step D — write `sar_sd.img` to a microSD** (≥ ~475 MB) with **[balenaEtcher](https://etcher.balena.io/)**
+(Flash from file → select image → select card → Flash), Win32DiskImager, or `dd`. ⚠️ This erases the
+whole card — use a dedicated one.
+
+Insert the card into the board's microSD slot and power-cycle. Progress prints on the UART (115200
+8N1); success is `[sar] DONE`.
+
+> Full walkthrough, both the prebuilt-image path and the generate-it-yourself path, and how the GPT
+> addressing works: **[`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md)**.
+> Quick check that the tools work without a card: `python mpfs/host/sd_pack.py --selftest`.
+
+---
+
+## Run board-free (laptop reference + silicon emulator)
+
+You can develop and validate the whole SAR pipeline without any hardware.
+
+**Golden reference** — download a CPHD, focus it with the Polar Format Algorithm, write a detected
+GeoTIFF:
 ```bash
 python src/form_image_pfa.py
 ```
+First run downloads the ~196 MB CPHD into `data/` (anonymous HTTPS). Key knobs at the top of the file:
+`MODE` (`"pfa"` ~12 s / `"quicklook"` ~7 s), `DECIMATE_PULSE`/`DECIMATE_SAMPLE`, `ESTIMATE_ONLY`,
+`SAVE_GEOTIFF`.
 
-First run downloads the ~196 MB CPHD into `data/` (anonymous HTTPS, no AWS
-credentials); later runs reuse the cache. The script prints a measured
-resource/time estimate before any heavy compute.
-
-Key knobs at the top of `src/form_image_pfa.py`:
-- `MODE` — `"pfa"` (geometrically correct, ~12 s) or `"quicklook"` (single 2-D FFT, ~7 s)
-- `DECIMATE_PULSE` / `DECIMATE_SAMPLE` — trade resolution for speed
-- `ESTIMATE_ONLY` — print the estimate and stop
-- `SAVE_GEOTIFF`, `OUT_TIF`, `GEO_EPSG`, `FLIP_COL/ROW` — detected GeoTIFF output
-
-## Run — silicon emulator (board-free)
-
+**Bit-accurate silicon emulator** — a fixed-point mirror of the on-silicon datapath (value-equals the
+golden); predicts exactly what the board produces:
 ```bash
-python mpfs/host/silicon_emulator.py            # both scenes, board config (deci 8, grid 8192)
+python mpfs/host/silicon_emulator.py
 ```
 
-Bit-accurate fixed-point mirror of the FPGA datapath — predicts exactly what the
-board produces, and forms focused images without hardware. On-silicon bring-up,
-JTAG load/run/dump, and test procedures are documented under
-[`docs/fpga/`](docs/fpga/).
+## Requirements
 
-## Requires
-
-Laptop pipeline: `numpy`, `scipy`, `matplotlib`, `sarpy`, `rasterio`, `pyproj`.
-Emulator/host tools: `numpy`, `pillow`. On-silicon build/bring-up uses Microchip
-Libero + SoftConsole and a FlashPro6 (see `docs/fpga/`).
+- **Program + provision (operator):** FlashPro Express (free) + a FlashPro programmer; a microSD card
+  (≥ ~475 MB) + reader; balenaEtcher. For generating the image: Python 3.9+ with `numpy` + `sarpy`.
+- **Laptop reference:** `numpy`, `scipy`, `matplotlib`, `sarpy`, `rasterio`, `pyproj`.
+- **Fabric rebuild / silicon bring-up (engineer):** Microchip Libero + SoftConsole + a FlashPro6.
+  See [`docs/fpga/`](docs/fpga/).

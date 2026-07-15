@@ -33,22 +33,31 @@ Everything you need is in this repo: the pack tools (`mpfs/host/`) **and the pre
 
 1. **Install Python deps** (once): `pip install numpy sarpy` (add `scipy` if prompted).
 
-2. **Get a CPHD scene.** Any Umbra open-data spotlight CPHD works — the public catalog
-   `s3://umbra-open-data-catalog` (us-west-2, anonymous HTTPS, no AWS account) under
-   `sar-data/tasks/<task>/<uuid>/<timestamp>_UMBRA-NN/CPHD.cphd`. Download the `CPHD.cphd` for the
-   scene you want. (The reference scene used for the shipped image was the NDSU 2023-11-10 UMBRA-04
-   capture.)
+2. **Get a CPHD scene.** Any Umbra open-data spotlight `CPHD.cphd` works — the exact scene is **not
+   required** to run the system; a specific one is only needed to reproduce the shipped reference
+   image. Catalog: `s3://umbra-open-data-catalog` (us-west-2, anonymous HTTPS, no AWS account),
+   layout `sar-data/tasks/<task>/<uuid>/<timestamp>_UMBRA-NN/CPHD.cphd`.
 
-3. **Stage the CPHD → pipeline inputs.** The pipeline grids to **8192×8192**, so both capture
-   dimensions must be ≤ 8192; decimate the one(s) that exceed it:
+   The **exact scene the shipped image was built from** (download this to reproduce it):
    ```
-   python mpfs/host/serialize_inputs.py --in <scene>_CPHD.cphd --grid 8192 \
-       --deci-pulse 1 --deci-sample 1 --out jtag_stage
+   https://umbra-open-data-catalog.s3.us-west-2.amazonaws.com/sar-data/tasks/North+Dakota+State+University+Plot/8d5a3c80-a3dc-47b2-bf31-f3921b8c0f39/2023-11-10-16-16-44_UMBRA-04/2023-11-10-16-16-44_UMBRA-04_CPHD.cphd
    ```
-   If it errors `scene MxN exceeds GRID_MAX 8192`, raise the decimation on the offending axis until
-   both fit — `--deci-pulse` for the vector/azimuth axis, `--deci-sample` for the sample/range axis
-   (e.g. a 8167×8999 capture needs `--deci-sample 2` → 8167×4500). It prints the final dims and a
-   resample-geometry self-check (`corr≈1.000` = good).
+   task `North Dakota State University Plot`, uuid `8d5a3c80-a3dc-47b2-bf31-f3921b8c0f39`, capture
+   `2023-11-10-16-16-44_UMBRA-04`; native 8167 pulses × ~9000 samples.
+
+3. **Stage the CPHD → pipeline inputs.** The pipeline grids to a fixed **8192×8192**, so both capture
+   dimensions must be ≤ 8192. For the NDSU scene above the sample axis is ~9000 (> 8192), so decimate
+   it by 2:
+   ```
+   python mpfs/host/serialize_inputs.py --in 2023-11-10-16-16-44_UMBRA-04_CPHD.cphd --grid 8192 \
+       --deci-pulse 1 --deci-sample 2 --out jtag_stage
+   ```
+   If it errors `scene MxN exceeds GRID_MAX 8192`, raise decimation on the offending axis until both
+   fit — `--deci-pulse` for the pulse/azimuth axis, `--deci-sample` for the sample/range axis
+   (8167×~9000 → `--deci-sample 2` → 8167×4500). It prints the final dims and a resample-geometry
+   self-check (`corr≈1.000` = good). Decimation (not cropping) is required because CPHD axes are phase
+   history, not image pixels — cropping them degrades focus over the whole image rather than selecting
+   a sub-scene.
 
 4. **Pack the GPT SD-boot image** (prebuilt payload + your staged scene):
    ```
