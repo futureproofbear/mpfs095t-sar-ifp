@@ -83,6 +83,31 @@ The card is **GPT-partitioned** for HSS SD-boot:
 You never compute addresses by hand — the tools pin these LBAs and the firmware matches them; you
 just write the whole image to the card.
 
-## Verify (optional)
+## Verify the provisioning tools (optional)
 `python mpfs/host/sd_pack.py --selftest` runs a synthetic GPT + scene round-trip (no card, no CPHD)
 to confirm the tool works. `python mpfs/host/mkpayload.py --selftest` checks the payload generator.
+
+## Verify the FOCUSED IMAGE came back (after a board run — fully headless)
+The board narrates its run on the UART (115200 8N1); the sequence ends in `[sar] DONE` once it has
+written the focused image to the card's OUT region (LBA 657408). To pull that image back to the PC
+and confirm it byte-for-byte (no Libero/JTAG):
+
+1. Power off the board, move the microSD to the PC reader.
+2. Identify the card's physical drive number (Windows, no admin tools needed):
+   ```
+   echo list disk | diskpart      # the card = the disk whose size matches (e.g. Disk 2 -> PhysicalDrive2)
+   ```
+3. Dump the OUT region (git-bash, **run the terminal as Administrator** — raw sector access needs it).
+   132 MiB = SARO superblock + the 128 MiB image + margin:
+   ```
+   dd if=//./PhysicalDrive2 of=out.bin bs=512 skip=657408 count=270336
+   ```
+4. Parse + validate CRC + render a preview PNG:
+   ```
+   python mpfs/host/read_sd_out.py --img out.bin --base-lba 657408 --out focused
+   ```
+   It prints the SARO TOC (scene_id, run_seq, dims), reports `CRC32 ... [MATCH]` when the on-card image
+   matches the CRC the firmware wrote, and emits `focused.bin` (raw 8192×8192 uint16) + `focused.png`
+   (log-scaled preview). A `[MISMATCH]` or an "OUT region is empty" message means the run did not commit
+   a good image — re-check the UART. `python mpfs/host/read_sd_out.py --selftest` proves the reader
+   itself (synthetic round-trip, no card).
