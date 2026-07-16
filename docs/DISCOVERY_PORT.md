@@ -99,7 +99,60 @@ Source: `github/polarfire-soc/polarfire-soc-discovery-kit-reference-design` (the
 | ⑥ | **Firmware SD read path** — `sar_sd.c` (`card_type=SD`, 4-bit, no Icicle mux; `SARI`@LBA 67584 → DDR → JOB) + autonomous boot (FFTMODE=1 fabric) | **DONE** — commit `83ef8ff` | board to validate runtime |
 | ⑦ | **Bitstream build + timing close on 095T** → export `.job` (fabric + HSS eNVM bundled) | **DONE** — timing MET @62.5 MHz (setup +ve, hold +ve), `mpfs/deliver/sar_top_095t.job` | — |
 | ⑧ | **Delivery package** — operator runbooks + one-click launcher + delivery bundle | **DONE** — `mpfs/deliver/` (`.job` + `program.bat` + `README.md`), `docs/PROGRAM_THE_BOARD.md`, `docs/SD_PROVISIONING.md` | — |
-| ⑨ | **On-Discovery bring-up** — program `.job`, write `--gpt` SD, DDR train, SD read, run pipeline, verify focused image | **PENDING** | Discovery board (colleague/engineer side) |
+| ⑨ | **On-Discovery bring-up** — program `.job`, write `--gpt` SD, DDR train, SD read, run pipeline, verify focused image | **BLOCKED — HSS boot hang (see below)** | HSS/DDR rebuild (engineer side) |
+
+## ⑨ Bring-up finding (2026-07-16) — HSS hangs in early MSS bring-up, before the app
+
+First-ever on-silicon boot of the `.job`. **Symptom (COM4 debug UART, 115200 8N1):** every boot HSS
+prints only
+
+```
+HSS: decompressing from eNVM to L2 Scratch ... Passed
+[0.43] wdog_service monitoring [u54_1..4]
+[0.50] beu_service :: [init] -> [monitoring]
+[0.57] Initializing Mi-V IHC V2      <-- last line, then silence
+```
+
+then the MSS is fully reset ~28.7 s later (internal timestamps restart → hardware/watchdog reset, not
+a software loop). No DDR-training output, no MMC/GPT boot, no HSS banner, no CLI prompt. **The SAR app
+never starts** (`u54_1()`'s `[sar] …` banner never appears), so the SD read / pipeline / save-out are
+all untested — we are blocked upstream in HSS's own bring-up.
+
+**Isolation done (live, on this board):**
+- **Card-independent** — identical hang with the microSD removed. → NOT the SD image, `SARI` scene,
+  `sd_pack.py`, or the SAR payload. The reader (`read_sd_out.py`) and SD provisioning are not implicated.
+- **NOT the FIC embedded DLL** — `FIC_0/1/2/3_EMBEDDED_DLL_USED false` is already set in
+  `mss_discovery/DISCOVERY_SAR_MSS.cfg` (the 250T data-plane-hang fix was applied).
+- **DDR type looks correct** — our MSS and the vendored `boards/mpfs-discovery-kit` MSS both set
+  `DDR_SDRAM_TYPE DDR4`, `DDR4_CLOCK_DDR 800` (DDR4-1600).
+
+**Open (could NOT resolve from local files):** whether the hang is DDR training itself or the step
+after it (DDR scrub / MMC controller / payload handoff). The UART silence is ambiguous because DDR
+progress prints are gated by `DEBUG_DDR_INIT`, and **HSS's own `mss_sw_config.h` is not in this repo**
+(HSS source is on the build machine, `build_hss.sh` → `/c/Users/lkwangsi/.../hart-software-services`).
+Note the HSS SD-boot path has **never run successfully on any board** — the 250T repo used JTAG +
+bare-metal + eMMC, not HSS — so this is its first hardware execution.
+
+**Recommended next step (engineer side, board-free to prepare):**
+1. Rebuild the SAME HSS with `#define DEBUG_DDR_INIT` in HSS's `mss_sw_config.h` → reprogram → the
+   boot log will SHOW whether DDR training runs and where it stops (resolves the ambiguity directly).
+2. Sanity-check the board itself: flash Microchip's stock `mpfs-hal-ddr-demo` built for
+   `mpfs-discovery-kit` (DDR test, prints ON). Trains+passes → our HSS/MSS build is at fault; also
+   hangs → board/DDR-config/hardware issue (revisit DDR4 params vs the actual memory device).
+
+**Cross-check against the proven 250T repo (`futureproofbear/mpfs250t-sar-ifp`, 2026-07-16):** it has
+**no HSS at all** — the proven boot is **boot-mode-1 bare-metal** (SAR app in eNVM at power-up, DDR
+trained by the bare-metal `mpfs-hal` at app start, data over JTAG/eMMC; programmed via
+`mpfsBootmodeProgrammer.jar` + `fpgenprog`). So the HSS SD-boot layer is entirely new and has never
+run on hardware — there is no HSS reference to diff against. Two useful takeaways:
+- **Rules out a fabric-clock cause of the DDR hang:** the MSS boots on its own 80 MHz SCB clock
+  before MSS clock config, independent of the fabric CCC/PLL (250T bring-up section 9.5). The DDR
+  hang is not gated on the fabric clock.
+- **Fallback delivery path (proven model):** drop HSS and ship the SAR app as a **boot-mode-1 eNVM
+  app** that trains DDR itself (`mpfs-hal`) and reads the scene from the microSD via the existing
+  `sar_sd.c` driver (`card_type=SD`, already written) — the proven "app-in-eNVM + data-from-card" M3
+  model, just SD instead of eMMC. Still a single `.job` (app as eNVM client); the colleague still
+  only programs + inserts the card. This sidesteps the unproven HSS layer that is hanging.
 
 ## The critical path / risk gates
 
