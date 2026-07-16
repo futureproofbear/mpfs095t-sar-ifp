@@ -13,7 +13,7 @@
 > **Repo consolidation (2026-06-28):** the former standalone `explorePolarFireSOC` folder — an
 > out-of-sync mirror whose `src/sar/` and `src/ddr_test/` were byte-identical to this repo's
 > SoftConsole copies (its hart apps were older stubs) — has been **removed**. Its unique assets
-> (this index, `docs/FLOW.md`, the PCB board file, the board-design PDF) were migrated here. Nothing
+> (this index, `docs/archive/FLOW.md`, the PCB board file, the board-design PDF) were migrated here. Nothing
 > outside this repo is a build input.
 >
 > **▶ CURRENT STATUS (2026-07-14 — NEWEST; supersedes the 2026-07-04 notes below for repo layout + eMMC).**
@@ -263,7 +263,7 @@ Root: `mpfs/fpga/libero_sar/softconsole/mpfs-hal-ddr-demo/src/` (= `<SC>/`)
   (PFA orchestration), `sar_resample_coeffs.{c,h}` (on-MSS coeff gen), `sar_accel_driver.{c,h}`
   (**legacy** monolithic driver — see §4.3).
 - `<SC>/platform/` — the compiled-against MPFS HAL copy (§5).
-- `docs/FLOW.md` — build/run tutorial (migrated from the old explore folder).
+- `docs/archive/FLOW.md` — early build/run tutorial (Icicle DDR test-packet flow; **archived**, superseded).
 
 ### src/ (Python golden — algorithm source of truth)
 - `form_image_pfa.py` (PFA focuser + golden + geocode), `fixedpoint.py` (BFP emulation/compare),
@@ -287,7 +287,7 @@ Root: `mpfs/fpga/libero_sar/softconsole/mpfs-hal-ddr-demo/src/` (= `<SC>/`)
     `lint_netlist.sh`/`run_build_safe.sh`), `docs/fpga/WIRING_GUIDE.md`, `docs/regmap.md`.
   - *Status / active:* `docs/fpga/SAR_BRINGUP_REPORT.md` (full on-silicon bring-up + doc cross-check §9),
     `docs/fpga/dma_fix_plan.md` (DMA control-slave root-cause→fix, §7g RESOLVED),
-    `docs/fpga/SMARTDEBUG_RUNBOOK.md` (reusable active-probe runbook), `docs/BRINGUP.md`.
+    `docs/fpga/SMARTDEBUG_RUNBOOK.md` (reusable active-probe runbook), `docs/archive/BRINGUP.md` (**archived**).
   - *History (resolved journey — `docs/fpga/history/`):* `M1_cosim.md`, `M2_integration.md`,
     `dataplane_bringup_vplan.md`, `dataplane_fix_plan.md` (superseded), `fic0s_probe_plan.md`,
     `id_restore_integration.md`, `idconv_gui_steps.md`, `sim-README.md`.

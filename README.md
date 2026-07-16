@@ -86,6 +86,7 @@ The `docs/` tree is large; you do not need all of it. The ones that matter, grou
 | Understand the SAR architecture + validation | [`docs/fpga/SAR_ARCHITECTURE_REPORT.md`](docs/fpga/SAR_ARCHITECTURE_REPORT.md) |
 | Rebuild the fabric / bring up on silicon (engineer) | [`docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md`](docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md), [`docs/fpga/SILICON_ISO_TEST_RUNBOOK.md`](docs/fpga/SILICON_ISO_TEST_RUNBOOK.md), [`docs/fpga/SMARTDEBUG_RUNBOOK.md`](docs/fpga/SMARTDEBUG_RUNBOOK.md) |
 | Find the authoritative status / avoid re-deriving | [`docs/PROJECT_SOURCE_OF_TRUTH.md`](docs/PROJECT_SOURCE_OF_TRUTH.md) |
+| Superseded / Icicle-era docs (provenance only) | [`docs/archive/`](docs/archive/) |
 
 ---
 
