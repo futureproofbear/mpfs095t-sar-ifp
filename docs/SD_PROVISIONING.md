@@ -87,6 +87,33 @@ just write the whole image to the card.
 `python mpfs/host/sd_pack.py --selftest` runs a synthetic GPT + scene round-trip (no card, no CPHD)
 to confirm the tool works. `python mpfs/host/mkpayload.py --selftest` checks the payload generator.
 
+## Run the scene on the board (after power-on — engineer thin client)
+Everything here is done on the **engineer thin client** (the laptop with the microSD reader + UART),
+not the Libero host. No JTAG, no debugger.
+
+1. Insert the provisioned microSD into the **Discovery board's microSD slot**.
+2. Connect the board's **UART** to the laptop (FTDI USB-UART; enumerates as **COM4** here) and open a
+   terminal at **115200 8N1** (PuTTY / Tera Term, or a logged read). Start capturing to a file so the
+   run is recoverable.
+3. Power-cycle the board. HSS boots from eNVM, trains DDR, loads the SAR-app payload (P1), which loads
+   the `SARI` scene (P2), focuses it on the fabric CoreFFT, and writes the image back to the OUT region.
+4. Watch the UART. A good run prints and then stops:
+   ```
+   [sar] Discovery microSD autonomous boot
+   [sar] FFTMODE=1 (fabric CoreFFT)
+   [sar] init microSD... ok
+   [sar] load scene from SD (P2)... ok
+   [sar] focus pipeline... ok
+   [sar] save OUT to SD... ok
+   [sar] DONE
+   ```
+   `[sar] DONE` after `save OUT to SD... ok` means the focused image is committed to the card — the
+   board has finished writing its output back to the SD card (no host transfer needed; the board is
+   the writer). If the log hangs or resets before `[sar]` ever appears, the SAR app never started —
+   that is the HSS bring-up blocker, see [DISCOVERY_BRINGUP_ISSUES.md](DISCOVERY_BRINGUP_ISSUES.md).
+
+Then pull the image back and check it (next two sections).
+
 ## Verify the FOCUSED IMAGE came back (after a board run — fully headless)
 The board narrates its run on the UART (115200 8N1); the sequence ends in `[sar] DONE` once it has
 written the focused image to the card's OUT region (LBA 657408). To pull that image back to the PC
@@ -111,3 +138,25 @@ and confirm it byte-for-byte (no Libero/JTAG):
    (log-scaled preview). A `[MISMATCH]` or an "OUT region is empty" message means the run did not commit
    a good image — re-check the UART. `python mpfs/host/read_sd_out.py --selftest` proves the reader
    itself (synthetic round-trip, no card).
+
+## Is the focused image correct? (not just intact)
+`CRC32 [MATCH]` only proves **integrity** — the bytes on the card are exactly what the firmware wrote,
+with no torn/corrupt sectors. It does not prove the pipeline focused the *right* image. Two checks, in
+increasing rigour:
+
+1. **Visual sanity (quick).** Open `focused.png`. A correct run shows a **sharply focused** scene with
+   recognizable ground features (for the NDSU plot: field parcels, roads, edges). A uniformly smeared,
+   streaked, or noise-like image means the pipeline ran but mis-focused (resample geometry, scaling, or
+   corner-turn) — capture it and compare against the reference below.
+2. **Bit-accurate reference (rigorous).** The board-free emulator `mpfs/host/silicon_emulator.py` is a
+   fixed-point mirror of the on-silicon datapath and equals the float golden (corr 1.0), so it predicts
+   the exact OUT the board should produce. Point it at the **same CPHD + same `--deci`/`--grid`** used
+   to build the card, then diff its output against `focused.bin`. The shipped emulator wires in the two
+   dev scenes (`--scene centerfield|ship`); for the Discovery NDSU scene add that CPHD to its `SCENES`
+   map (same pattern) and run with `--deci 2 --grid 8192`. Method + the orientation/transpose pitfall to
+   watch for: the `sar-verification-methodology` skill and [PROJECT_SOURCE_OF_TRUTH.md](PROJECT_SOURCE_OF_TRUTH.md).
+
+Note: the SAR datapath (RTL + firmware) is **unchanged** from the 250T build that was proven on silicon
+(corr ~0.97 vs golden, phase-exact FFT); only the wrapper/board/storage differ. So for Discovery
+bring-up, a `[MATCH]` plus a cleanly focused `focused.png` is normally sufficient — reach for the full
+emulator diff only if the image looks wrong.

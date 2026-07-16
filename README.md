@@ -28,6 +28,10 @@ committed, and timing-closed:
 UART reaches `[sar] DONE`. The underlying SAR datapath is already **proven on 250T silicon** (focused
 image, corr ~0.97 vs golden; phase-exact fabric FFT) — see [HANDOFF.md](HANDOFF.md).
 
+**Known first-boot blocker (open):** the initial on-silicon boot hangs in HSS at Mi-V IHC init — HSS
+tries to initialize a fabric IHC block this bitstream doesn't include. Root-caused, with a one-line
+HSS-defconfig fix (`# CONFIG_USE_IHC_V2 is not set`): [`docs/DISCOVERY_BRINGUP_ISSUES.md`](docs/DISCOVERY_BRINGUP_ISSUES.md).
+
 ---
 
 ## Taking over this project? Start here
@@ -76,6 +80,8 @@ The `docs/` tree is large; you do not need all of it. The ones that matter, grou
 |-----|------|
 | **Generate the microSD `.img`** | [`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md) (full detail; recipe also below) |
 | **Program the board** | [`docs/PROGRAM_THE_BOARD.md`](docs/PROGRAM_THE_BOARD.md) |
+| **Run a scene on the board + verify the focused image** (engineer thin client) | [`docs/SD_PROVISIONING.md`](docs/SD_PROVISIONING.md) § "Run the scene on the board" → "Is the focused image correct?" |
+| **Current bring-up blocker** (first-boot HSS hang) + the fix | [`docs/DISCOVERY_BRINGUP_ISSUES.md`](docs/DISCOVERY_BRINGUP_ISSUES.md) |
 | Understand the Discovery-Kit port + boot flow | [`docs/DISCOVERY_PORT.md`](docs/DISCOVERY_PORT.md), [`docs/HSS_INTEGRATION.md`](docs/HSS_INTEGRATION.md) |
 | Understand the SAR architecture + validation | [`docs/fpga/SAR_ARCHITECTURE_REPORT.md`](docs/fpga/SAR_ARCHITECTURE_REPORT.md) |
 | Rebuild the fabric / bring up on silicon (engineer) | [`docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md`](docs/fpga/LIBERO_HEADLESS_PLAYBOOK.md), [`docs/fpga/SILICON_ISO_TEST_RUNBOOK.md`](docs/fpga/SILICON_ISO_TEST_RUNBOOK.md), [`docs/fpga/SMARTDEBUG_RUNBOOK.md`](docs/fpga/SMARTDEBUG_RUNBOOK.md) |

@@ -3,8 +3,9 @@
 Handoff for the developer on the **Libero SoC host** (builds + programming). First on-silicon boot of
 the delivered `mpfs/deliver/sar_top_095t.job` on a PolarFire SoC Discovery Kit (MPFS095T-FCSG325)
 **fails**: HSS boot-loops and the SAR app never starts. This doc is self-contained — symptom, what is
-already ruled out, the open question, and a ranked set of issues with concrete steps and acceptance
-criteria. Full context: [DISCOVERY_PORT.md](DISCOVERY_PORT.md) workstream ⑨.
+already ruled out, the **root cause** (found 2026-07-17), and a ranked set of issues with concrete steps
+and acceptance criteria. **Start at Issue #1a — the one-line fix.** Full context:
+[DISCOVERY_PORT.md](DISCOVERY_PORT.md) workstream ⑨.
 
 ## Who does what (two machines)
 
@@ -45,15 +46,56 @@ own bring-up.
   independent of the fabric CCC (confirmed in the proven 250T bring-up). The DDR hang is not gated on
   the fabric clock.
 
-## The open question (what the first diagnostic must answer)
+## Root cause (found 2026-07-17, from the HSS source on the build machine)
 
-Is the hang **DDR training itself**, or the **step right after it** (DDR scrub / MMC controller /
-payload handoff)? The UART silence is ambiguous because DDR-training prints are gated by
-`DEBUG_DDR_INIT`, and the HSS build shipped with prints off. Issue #1 resolves this directly.
+The hang is **not** DDR — DDR training is never reached. It is HSS's **Mi-V IHC init poking a fabric
+IHC IP that this bitstream does not contain**. Evidence, all from
+`polarfire-soc/hart-software-services`:
+
+- `HSS_IHCInit` is entry **#1** in `application/hart0/hss_registry.c: globalInitFunctions[]` (gated by
+  `CONFIG_USE_IHC_V2`), a few entries **ahead of `HSS_LogoInit`** (the banner). The boot stops at the IHC
+  print with **no logo, no version banner, no DDR output after it** → IHC init never returns.
+- The disco-kit defconfig **enables it**: `boards/mpfs-disco-kit/def_config:133` → `CONFIG_USE_IHC_V2=y`.
+- IHC init writes fabric registers: `IHC_global_init()` (`baremetal/drivers/fpga_ip/miv_ihc/miv_ihc.c`)
+  dereferences `ihc_base_address[][]`, built on `COMMON_AHB_BASE_ADD 0x50000000` — a **fabric** address.
+- Our fabric design instantiates **no IHC IP** (`grep -ri IHC mpfs/**/*.{v,cfg,tcl}` → only docs). So the
+  AXI access to `0x50000000` gets no slave response → the E51 stalls → watchdog resets at ~28.7 s.
+- The SAR app does not use IHC: E51 (`application/hart0/e51.c`) wakes **U54_1 only** and idles; there is
+  no AMP/RPMsg peer. IHC is dead weight for this design.
+
+This also corrects one "ruled out" item: the fabric-clock argument was scoped to **DDR** only. IHC is a
+**fabric** peripheral, so fabric presence/readiness was never actually ruled out for this hang.
+
+**Do Issue #1a first — it is a one-line config change that is very likely the fix, not just a probe.**
 
 ---
 
-## Issue #1 — [P0, BLOCKER] HSS hangs after Mi-V IHC init; make it tell us where
+## Issue #1a — [P0, ROOT CAUSE] Disable Mi-V IHC in the HSS build
+
+**Goal:** stop HSS initializing a fabric IHC block the bitstream doesn't have. The app never needed it.
+
+Steps (Libero host):
+1. In the HSS source, edit `boards/mpfs-disco-kit/def_config` and turn IHC off:
+   ```diff
+   -CONFIG_USE_IHC_V2=y
+   +# CONFIG_USE_IHC_V2 is not set
+   ```
+   (`CONFIG_HSS_USE_IHC` is already unset; this removes `HSS_IHCInit` from `globalInitFunctions[]`.)
+2. Rebuild HSS and re-export the `.job` (recipe below in Issue #1 / [HSS_INTEGRATION.md](HSS_INTEGRATION.md)).
+   `make BOARD=mpfs-disco-kit` picks up the changed defconfig — confirm `.config` no longer has
+   `CONFIG_USE_IHC_V2`.
+3. Program, power-cycle, capture COM4.
+
+**Decision tree:**
+- Boots past `Initializing Mi-V IHC` → prints the HSS logo/banner and proceeds to DDR/MMC → **IHC was
+  the blocker.** Continue to the acceptance criteria; if it now stops somewhere in DDR/MMC, go to
+  Issue #1 (turn DDR prints on) — but that is a *new*, later hang, not this one.
+- Still stops at the exact same point → IHC was not the (sole) trigger; fall through to Issue #1.
+
+Do this **in the same rebuild** as Issue #1 (disable IHC *and* enable DDR prints) to spend one
+program-and-boot cycle instead of two.
+
+## Issue #1 — [P1, FALLBACK] HSS hangs after Mi-V IHC init; make it tell us where
 
 **Goal:** turn on DDR-training telemetry so the boot log shows whether DDR trains and where it stops.
 
@@ -138,9 +180,11 @@ A good boot prints this on COM4 and stops:
 [sar] save OUT to SD... ok
 [sar] DONE
 ```
-Then the engineer pulls the card and runs `python mpfs/host/read_sd_out.py --img out.bin
---base-lba 657408 --out focused` (full procedure in [SD_PROVISIONING.md](SD_PROVISIONING.md)); a
-`CRC32 ... [MATCH]` + a sensible `focused.png` closes workstream ⑨.
+Then the engineer pulls the card and reads the image back with `read_sd_out.py` — full run-and-verify
+procedure (power-on → UART → dump OUT → CRC + render → is-it-correct) in
+[SD_PROVISIONING.md](SD_PROVISIONING.md) §§ "Run the scene on the board" / "Verify the FOCUSED IMAGE" /
+"Is the focused image correct?". A `CRC32 ... [MATCH]` (image on the card is intact) **plus** a cleanly
+focused `focused.png` (image is correct, not just intact) closes workstream ⑨.
 
 ## Reference
 

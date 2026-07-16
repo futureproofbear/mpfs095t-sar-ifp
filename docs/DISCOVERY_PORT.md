@@ -12,7 +12,7 @@ storage) is retargeted. `mpfs250t-sar-ifp` remains the dev/debug repo (Icicle, J
 
 | Decision | Choice |
 |---|---|
-| Delivery board | **Discovery Kit — MPFS095T-FCSG325**, LPDDR4 |
+| Delivery board | **Discovery Kit — MPFS095T-FCSG325**, DDR4 (DDR4-1600; see findings below) |
 | Build ownership | **We build** the signed FlashPro Express `.job`; colleague **only programs** (free FPExpress, no Libero) |
 | SD data model | **Raw-sector image** (`SARI` superblock @ LBA 0); colleague images the card on a PC (balenaEtcher / `dd`) |
 | Repo scope | **Standalone** — shared build sources + the 095T build flow + SD tooling + delivery package |
@@ -126,28 +126,32 @@ all untested — we are blocked upstream in HSS's own bring-up.
 - **DDR type looks correct** — our MSS and the vendored `boards/mpfs-discovery-kit` MSS both set
   `DDR_SDRAM_TYPE DDR4`, `DDR4_CLOCK_DDR 800` (DDR4-1600).
 
-**Open (could NOT resolve from local files):** whether the hang is DDR training itself or the step
-after it (DDR scrub / MMC controller / payload handoff). The UART silence is ambiguous because DDR
-progress prints are gated by `DEBUG_DDR_INIT`, and **HSS's own `mss_sw_config.h` is not in this repo**
-(HSS source is on the build machine, `build_hss.sh` → `/c/Users/lkwangsi/.../hart-software-services`).
-Note the HSS SD-boot path has **never run successfully on any board** — the 250T repo used JTAG +
-bare-metal + eMMC, not HSS — so this is its first hardware execution.
+**RESOLVED (2026-07-17, from the HSS source on the build machine):** the hang is **HSS Mi-V IHC init
+poking a fabric IHC IP the bitstream doesn't contain** — DDR is never reached. `HSS_IHCInit` is entry
+#1 in `hss_registry.c: globalInitFunctions[]` (immediately before `HSS_LogoInit`; enabled by
+`boards/mpfs-disco-kit/def_config: CONFIG_USE_IHC_V2=y`), and it writes fabric registers at
+`0x50000000` (`miv_ihc.c` / `COMMON_AHB_BASE_ADD`). Our fabric instantiates no IHC IP → the AXI access
+stalls → watchdog reset. The app never uses IHC (E51 wakes U54_1 only). **Fix: disable IHC in the HSS
+defconfig** (`# CONFIG_USE_IHC_V2 is not set`), rebuild, re-export. Full root-cause + steps:
+[DISCOVERY_BRINGUP_ISSUES.md](DISCOVERY_BRINGUP_ISSUES.md) Issue #1a. DDR-print telemetry (below)
+remains the right next probe only if a *new* hang appears after IHC is disabled.
 
-**Recommended next step (engineer side, board-free to prepare):**
-1. Rebuild the SAME HSS with `#define DEBUG_DDR_INIT` in HSS's `mss_sw_config.h` → reprogram → the
-   boot log will SHOW whether DDR training runs and where it stops (resolves the ambiguity directly).
-2. Sanity-check the board itself: flash Microchip's stock `mpfs-hal-ddr-demo` built for
-   `mpfs-discovery-kit` (DDR test, prints ON). Trains+passes → our HSS/MSS build is at fault; also
-   hangs → board/DDR-config/hardware issue (revisit DDR4 params vs the actual memory device).
+**Engineer-side steps (board-free to prepare):**
+1. Disable Mi-V IHC in `boards/mpfs-disco-kit/def_config` and, in the same rebuild, enable
+   `#define DEBUG_DDR_INIT` so if DDR is now reached its progress is visible. Reprogram, capture COM4.
+2. If a DDR hang then appears, sanity-check the board: flash Microchip's stock `mpfs-hal-ddr-demo`
+   built for `mpfs-discovery-kit` (DDR test, prints ON). Trains+passes → our build is at fault; also
+   hangs → board/DDR-config issue (revisit DDR4 params vs the actual memory device).
 
 **Cross-check against the proven 250T repo (`futureproofbear/mpfs250t-sar-ifp`, 2026-07-16):** it has
 **no HSS at all** — the proven boot is **boot-mode-1 bare-metal** (SAR app in eNVM at power-up, DDR
 trained by the bare-metal `mpfs-hal` at app start, data over JTAG/eMMC; programmed via
 `mpfsBootmodeProgrammer.jar` + `fpgenprog`). So the HSS SD-boot layer is entirely new and has never
 run on hardware — there is no HSS reference to diff against. Two useful takeaways:
-- **Rules out a fabric-clock cause of the DDR hang:** the MSS boots on its own 80 MHz SCB clock
-  before MSS clock config, independent of the fabric CCC/PLL (250T bring-up section 9.5). The DDR
-  hang is not gated on the fabric clock.
+- **Fabric-clock note:** the MSS boots on its own 80 MHz SCB clock before MSS clock config,
+  independent of the fabric CCC/PLL (250T bring-up section 9.5) — so a fabric-clock cause is ruled out
+  for a *DDR* hang. It does **not** exempt the IHC hang: IHC is a fabric peripheral, and the real
+  problem there is a missing IHC IP (see RESOLVED above), not the fabric clock.
 - **Fallback delivery path (proven model):** drop HSS and ship the SAR app as a **boot-mode-1 eNVM
   app** that trains DDR itself (`mpfs-hal`) and reads the scene from the microSD via the existing
   `sar_sd.c` driver (`card_type=SD`, already written) — the proven "app-in-eNVM + data-from-card" M3
@@ -162,8 +166,9 @@ run on hardware — there is no HSS reference to diff against. Two useful takeaw
 2. **Fit + timing (⑦)** — LSRAM ~27% is *estimated*; only P&R proves it fits AND closes at 62.5 MHz.
    Board-independent, so we run it headless here once ④ exists. If it overflows LSRAM, fall back to
    1 lane / strip the 16k combine (already planned).
-3. **Discovery DDR (LPDDR4) + SD bring-up (⑤⑥⑨)** need the actual Discovery board — done colleague-side
-   or when we have one. The vendored `boards/mpfs-discovery-kit/` MSS config is a start, not verified.
+3. **Discovery DDR (DDR4) + SD bring-up (⑤⑥⑨)** need the actual Discovery board — done colleague-side
+   or when we have one. Our MSS and the vendored `boards/mpfs-discovery-kit/` MSS both set
+   `DDR_SDRAM_TYPE DDR4` (DDR4-1600); that matches the vendor reference but is not yet silicon-verified.
 
 ## Documentation needed
 
@@ -172,7 +177,8 @@ run on hardware — there is no HSS reference to diff against. Two useful takeaw
   to the MSS SDMMC; DDR/UART/REFCLK pins). → workstream ④.
 - **MPFS095T datasheet** — exact LSRAM/DSP/LUT counts to confirm the fit budget binds where expected.
 - **FlashPro Express user guide** — the `.job` production + `RUN_PROJECT` CLI for `program.bat`. → ⑧.
-- Confirm the vendored Discovery **LPDDR4 MSS config** matches the colleague's board revision.
+- Confirm the vendored Discovery **DDR4 MSS config** (`DDR_SDRAM_TYPE DDR4`, DDR4-1600) matches the
+  colleague's board revision / actual DRAM part.
 
 **We will produce (for the colleague):**
 - `docs/SD_PROVISIONING.md` — run `sd_pack.py`, image the card, insert + power on.
