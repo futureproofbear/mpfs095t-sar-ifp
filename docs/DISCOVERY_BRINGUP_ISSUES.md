@@ -72,12 +72,34 @@ This also corrects one "ruled out" item: the fabric-clock argument was scoped to
 
 ## Issue #1a — [P0, ROOT CAUSE] Disable Mi-V IHC in the HSS build
 
-> **✅ APPLIED 2026-07-17 (board-confirmation pending).** HSS was rebuilt with `# CONFIG_USE_IHC_V2 is
-> not set` (via `mpfs/fpga/hss/build_hss.sh`; `HSS_IHCInit` + the "Initializing Mi-V IHC" string are
-> confirmed gone from the built ELF), and `mpfs/deliver/sar_top_095t.job` was re-exported to carry the
-> new HSS in eNVM (no fabric re-P&R). **Program the new `.job` and re-test** — a boot that passes
-> `Initializing Mi-V IHC` and reaches `[sar] DONE` closes this. If it still hangs there, fall through to
-> Issue #1. The steps below are retained for reproducibility / a fresh HSS clone.
+> **✅ APPLIED 2026-07-17 (board-confirmation pending). Delivered `.job` sha256
+> `e32ed6443675d4656523848bdcb3331c50462befdabb8ba22a15802387063868` — program exactly this file.**
+>
+> HSS was **clean-rebuilt** with `# CONFIG_USE_IHC_V2 is not set` (via `build_hss.sh`) and the delivery
+> `.job` re-exported with the new HSS in eNVM (no fabric re-P&R). Proven IHC-free before shipping:
+> ```
+> riscv64-unknown-elf-nm  build/hss-l2scratch.elf | grep -i ihc          # empty
+> riscv64-unknown-elf-strings build/hss-l2scratch.elf | grep -i "Mi-V IHC" # empty
+> objcopy -I ihex -O binary <embedded.hex> b.bin; strings b.bin | grep -i ihc  # empty
+> ```
+> And the eNVM data really changed in the job: `bitstream_digest` `98a78d7c…` (original, IHC) →
+> `8647ecec…` (new); `program_envm0=true`. Since the fabric P&R is unchanged, the digest delta *is* the
+> eNVM/HSS content.
+>
+> **⚠ The trap that cost a board cycle: `make clean` is mandatory.** An incremental rebuild after
+> flipping the Kconfig linked stale objects and shipped a binary that was IHC-free but not the final
+> one; more importantly, a bare `export_prog_job` without regenerating programming data reuses the old
+> eNVM. `build_hss.sh` now always `make clean`s, and the export (`build_disc_bootable.tcl`) does
+> `configure_envm` → `GENERATEPROGRAMMINGDATA` → `export_prog_job`, not a bare export.
+>
+> **On-board litmus test:** the new HSS binary contains **no** "Initializing Mi-V IHC" string, so it
+> physically cannot print that line. On the next boot with the new `.job`:
+> - line **gone** → new eNVM is running. If it now hangs later (DDR/SD), that is a *different* issue → Issue #1.
+> - line **still there** → the chip is still running the OLD eNVM: either the wrong/old `.job` was
+>   programmed (check the sha256 above) or FlashPro programmed FABRIC only and skipped eNVM (ensure the
+>   PROGRAM action includes the eNVM component). Not a code problem.
+>
+> The steps below are retained for reproducibility / a fresh HSS clone.
 
 **Goal:** stop HSS initializing a fabric IHC block the bitstream doesn't have. The app never needed it.
 

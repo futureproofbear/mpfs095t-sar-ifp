@@ -17,6 +17,11 @@ MAKE="$SC/build_tools/bin/make.exe"
 BOARD="mpfs-disco-kit"
 
 cd "$HSS"
+# ALWAYS clean first. An incremental rebuild after a Kconfig change (e.g. disabling IHC below) can
+# link stale objects and silently ship the OLD behaviour -- it cost a board cycle once. HSS builds
+# in a couple of minutes, so a from-scratch build is cheap insurance that config changes take.
+echo "[hss] clean"
+"$MAKE" BOARD="$BOARD" clean || true
 echo "[hss] defconfig for $BOARD"
 "$MAKE" BOARD="$BOARD" defconfig
 # SoftConsole v2022.2 ships the riscv64-unknown-elf- gcc 8.3.0 toolchain; HSS selects it only
