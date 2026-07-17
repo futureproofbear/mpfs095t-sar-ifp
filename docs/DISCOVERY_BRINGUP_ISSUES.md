@@ -4,8 +4,30 @@ Handoff for the developer on the **Libero SoC host** (builds + programming). Fir
 the delivered `mpfs/deliver/sar_top_095t.job` on a PolarFire SoC Discovery Kit (MPFS095T-FCSG325)
 **fails**: HSS boot-loops and the SAR app never starts. This doc is self-contained — symptom, what is
 already ruled out, the **root cause** (found 2026-07-17), and a ranked set of issues with concrete steps
-and acceptance criteria. **Start at Issue #1a — the one-line fix.** Full context:
+and acceptance criteria. **Read the 2026-07-17 board update immediately below first** — the IHC hang is
+now confirmed fixed on silicon and the blocker has moved. Full context:
 [DISCOVERY_PORT.md](DISCOVERY_PORT.md) workstream ⑨.
+
+> **▶ 2026-07-17 — BOARD UPDATE (engineer laptop, live COM4/COM6 capture of the new IHC-free `.job`).**
+> The bring-up has moved **two stages forward**; the issue list below is now largely historical.
+>
+> - **Issue #1a CONFIRMED FIXED on silicon.** The `Initializing Mi-V IHC` line **never appears** and the
+>   old ~28.7 s reset is gone. HSS boots all the way through to its service **superloop** — COM4 prints a
+>   `[t] loop N took … ticks (max …)` heartbeat with the uptime climbing, i.e. DDR trained and the payload
+>   loaded. (Multiple clean power-on boots; timestamps restart at `[0.xx]` on each real reset.)
+> - **The SAR app now launches.** COM6 shows `… load scene from SD (P2)... ok` followed by
+>   `[sar] focus pipeline...` → the HSS→payload handoff and the microSD scene load both work.
+> - **NEW BLOCKER — the focus pipeline does not finish.** No run has reached `save OUT`/`DONE`, and
+>   `read_sd_out.py` confirms the card OUT region is **empty** (`magic=0x00000000`, PhysicalDrive1). One run
+>   printed `focus pipeline... ok` (a completion), yet another ran **9.5 min undisturbed stuck at
+>   `focus pipeline...`** with no `ok` and no `[sar] FAIL`. The stall is therefore **intermittent** — the
+>   fingerprint of marginal timing / shared-interconnect contention, not a deterministic logic bug.
+>   → **new focus of the loop: [Issue #4](#issue-4--p0-current-blocker-focus-pipeline-stalls-intermittently-no-save-out).**
+>   Issues #1/#2/#3 are moot unless a future rebuild regresses HSS.
+>
+> **⚠ UART port correction:** HSS prints on **COM4**, but the **SAR app (`[sar] …`) prints on COM6** — a
+> *different* FlashPro5 channel (a separate MMUART instance). The old symptom below assumed the app would
+> appear on COM4; it does not. **Watch COM6 for the app**, COM4 for HSS.
 
 ## Who does what (two machines)
 
@@ -72,8 +94,9 @@ This also corrects one "ruled out" item: the fabric-clock argument was scoped to
 
 ## Issue #1a — [P0, ROOT CAUSE] Disable Mi-V IHC in the HSS build
 
-> **✅ APPLIED 2026-07-17 (board-confirmation pending). Delivered `.job` sha256
-> `e32ed6443675d4656523848bdcb3331c50462befdabb8ba22a15802387063868` — program exactly this file.**
+> **✅ APPLIED + BOARD-CONFIRMED 2026-07-17. The `Initializing Mi-V IHC` line is gone and HSS boots
+> through to its superloop on silicon (see the top board update) — this fix is verified, not just applied.
+> Delivered `.job` sha256 `e32ed6443675d4656523848bdcb3331c50462befdabb8ba22a15802387063868`.**
 >
 > HSS was **clean-rebuilt** with `# CONFIG_USE_IHC_V2 is not set` (via `build_hss.sh`) and the delivery
 > `.job` re-exported with the new HSS in eNVM (no fabric re-P&R). Proven IHC-free before shipping:
@@ -195,6 +218,44 @@ trains DDR itself via bare-metal `mpfs-hal`, and reads its data from the card.
 - This is a real firmware/linker effort (boot-mode-1 startup, eNVM placement, DDR self-train), so it
   is the fallback, not the first move.
 
+## Issue #4 — [P0, CURRENT BLOCKER] Focus pipeline stalls intermittently (no save-out)
+
+**Symptom (COM6, IHC-free `.job`, 2026-07-17):** the app reaches `[sar] focus pipeline...` and then, on a
+stuck run, prints nothing further for **9.5+ min** with the board left untouched — no `ok`, no
+`[sar] FAIL … = 0x…` — while HSS keeps heartbeating on COM4 (the board is alive, only the U54 app is
+wedged). A *separate* run printed `focus pipeline... ok`, so the stall is **intermittent**.
+`read_sd_out.py` confirms the card OUT region is empty → no image was ever formed or saved.
+
+**Why the UART can't localize it yet:** `sar_form_image()` (`sar_sequencer.c`) prints only
+`focus pipeline...` at the start and `ok` at the very end — **no per-stage output** — so the exact stalling
+stage is invisible from the console. The per-stage waits are bounded (`spins = 0x40000000`) and *would*
+eventually return `SAR_SEQ_TIMEOUT_*` → `[sar] FAIL form_image = <code>`; not seeing a FAIL in 9.5 min means
+either the hart is **hard-stalled on a fabric AXI load that never returns** (so the bounded-wait code never
+runs) or the timeout is longer than observed. Either way the stall is in the **fabric datapath**, not the
+CPU sequencer.
+
+**Prime suspect — the FFT/DMA streaming path.** The sequencer's own comments flag exactly this as a
+shared-interconnect contention stall (range/azimuth FFT: *"the DMA is still flushing transform t's output
+while the feeder pulls t+1's input over the shared interconnect → CoreFFT drops BUF_READY and the pipeline
+locks up"*). Intermittency fits a timing/arbitration race there. The corner-turn transpose (256 MiB
+DDR↔DDR over the same non-coherent FIC0) is the second suspect.
+
+Steps to localize (ranked):
+1. **Make the stalling stage visible.** Either (a) add one UART line before/after each stage
+   (resample / window / rangeFFT / cornerturn / azimuthFFT / detect) in `sar_form_image` and rebuild the
+   **payload only** (no fabric re-P&R; re-pack the card with `sd_pack.py`), or (b) read
+   `SAR_PROG @ 0xB0059100` (`pass / idx / total / heartbeat`) live over SmartDebug — shows the stalling
+   stage *and* whether its index is still advancing, with no rebuild.
+2. **A/B the FFT path.** `u54_1.c` hard-writes `SAR_FFTMODE=1` (fabric CoreFFT) at boot; flip that one
+   line to `0` (CPU `sar_cpu_fft`, the always-correct fallback) + payload rebuild. If the pipeline then
+   completes, the fabric FFT streaming/re-arm is the culprit (slow but proves it out).
+3. Once the stage is known, **gate its timing**: confirm P&R **hold** on that kernel's clock domain and
+   the FIC0 path (intermittent ⇒ suspect a marginal hold or a CDC), and check that kernel's AXI handshake
+   against its golden TB before changing RTL (project rule: read the reference before fixing).
+
+**Acceptance:** a run reaches `[sar] save OUT to SD... ok → DONE`, and `read_sd_out.py` returns
+`CRC32 … [MATCH]` with a clean `focused.png`.
+
 ---
 
 ## Acceptance criteria (how the engineer confirms a fix)
@@ -217,8 +278,11 @@ focused `focused.png` (image is correct, not just intact) closes workstream ⑨.
 
 ## Reference
 
-- UART capture: 115200 8N1 on the FTDI USB-UART (enumerates as **COM4** on the engineer laptop);
-  any terminal (PuTTY / Tera Term) or a logged serial read works.
+- UART capture: 115200 8N1 on the FlashPro5 USB-UART. Three ports enumerate (COM4/5/6 on the engineer
+  laptop): **HSS prints on COM4**, the **SAR app (`[sar] …`) prints on COM6** (COM5 idle). Watch COM6 for
+  the app. Any terminal (PuTTY / Tera Term) or a logged serial read works; a headless multi-port capture
+  that reconnects through the USB re-enumeration a power-cycle causes is in
+  `scratchpad/capture.py` (session-local).
 - Boot flow + addresses: [HSS_INTEGRATION.md](HSS_INTEGRATION.md), [DISCOVERY_PORT.md](DISCOVERY_PORT.md).
 - Firmware: `mpfs/fpga/libero_sar/softconsole/mpfs-hal-ddr-demo/src/sar/sar_sd.c`,
   `.../application/hart1/u54_1.c` (the `#ifdef SAR_SD_BOOT` autonomous path).

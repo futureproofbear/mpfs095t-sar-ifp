@@ -99,7 +99,7 @@ Source: `github/polarfire-soc/polarfire-soc-discovery-kit-reference-design` (the
 | ⑥ | **Firmware SD read path** — `sar_sd.c` (`card_type=SD`, 4-bit, no Icicle mux; `SARI`@LBA 67584 → DDR → JOB) + autonomous boot (FFTMODE=1 fabric) | **DONE** — commit `83ef8ff` | board to validate runtime |
 | ⑦ | **Bitstream build + timing close on 095T** → export `.job` (fabric + HSS eNVM bundled) | **DONE** — timing MET @62.5 MHz (setup +ve, hold +ve), `mpfs/deliver/sar_top_095t.job` | — |
 | ⑧ | **Delivery package** — operator runbooks + one-click launcher + delivery bundle | **DONE** — `mpfs/deliver/` (`.job` + `program.bat` + `README.md`), `docs/PROGRAM_THE_BOARD.md`, `docs/SD_PROVISIONING.md` | — |
-| ⑨ | **On-Discovery bring-up** — program `.job`, write `--gpt` SD, DDR train, SD read, run pipeline, verify focused image | **BLOCKED — HSS boot hang (see below)** | HSS/DDR rebuild (engineer side) |
+| ⑨ | **On-Discovery bring-up** — program `.job`, write `--gpt` SD, DDR train, SD read, run pipeline, verify focused image | **IN PROGRESS (2026-07-17)** — HSS boot + IHC fix + DDR + SD scene load **board-confirmed**; app runs; now **blocked on an intermittent focus-pipeline stall** (no save-out, card OUT empty). See [DISCOVERY_BRINGUP_ISSUES.md](DISCOVERY_BRINGUP_ISSUES.md) Issue #4 | Discovery board (engineer side) |
 
 ## ⑨ Bring-up finding (2026-07-16) — HSS hangs in early MSS bring-up, before the app
 
