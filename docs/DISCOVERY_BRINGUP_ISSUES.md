@@ -226,7 +226,20 @@ stuck run, prints nothing further for **9.5+ min** with the board left untouched
 wedged). A *separate* run printed `focus pipeline... ok`, so the stall is **intermittent**.
 `read_sd_out.py` confirms the card OUT region is empty → no image was ever formed or saved.
 
-**Why the UART can't localize it yet:** `sar_form_image()` (`sar_sequencer.c`) prints only
+**Board result (2026-07-18) — it's a HARD stall, not a spin-timeout (run-to-completion test).** A single
+**uninterrupted 41-minute** run (COM4 HSS heartbeat continuous `[102s] → [2470s]`, one boot, steady
+~4660 ticks/batch throughout) sat at `[sar] focus pipeline...` the entire time — **no `ok`, no `DONE`, and
+decisively no `[sar] FAIL form_image = SAR_SEQ_TIMEOUT_*`**. 41 min far exceeds the ~1e9-poll spin budget,
+so a spin-wait stall would have timed out and named the stage by now; it did not. → the U54 hart is
+**hard-stalled on an AXI load that never returns** (the bounded-wait counter can't advance because the CPU
+is frozen on the load), i.e. the "PC pinned on a load, no timeout" case — corroborated by the dead-flat HSS
+heartbeat (no bus-contention churn from U54). With the earlier `focus pipeline... ok` completion, this is an
+**intermittent hard AXI/interconnect deadlock**, not slowness, not a spin-timeout, and (timing MET) not a
+hold violation. **Actionable:** do **not** wait for a `SAR_SEQ_TIMEOUT` FAIL — it will never fire. Go
+straight to `run_app_pc_probe.sh` on a stuck run: a PC pinned on a load from `0x6000_xxxx` names the guilty
+kernel's AXI4-Lite poll; a load from a DDR address points at the FIC0/DMA path.
+
+**Why the UART can't localize it further:** `sar_form_image()` (`sar_sequencer.c`) prints only
 `focus pipeline...` at the start and `ok` at the very end — **no per-stage output** — so the exact stalling
 stage is invisible from the console. The per-stage waits are bounded (`spins = 0x40000000`) and *would*
 eventually return `SAR_SEQ_TIMEOUT_*` → `[sar] FAIL form_image = <code>`; not seeing a FAIL in 9.5 min means
