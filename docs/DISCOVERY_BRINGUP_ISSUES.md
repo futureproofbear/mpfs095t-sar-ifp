@@ -240,12 +240,20 @@ while the feeder pulls t+1's input over the shared interconnect → CoreFFT drop
 locks up"*). Intermittency fits a timing/arbitration race there. The corner-turn transpose (256 MiB
 DDR↔DDR over the same non-coherent FIC0) is the second suspect.
 
+> **Tooling note (2026-07-17):** the engineer laptop has only FlashPro Express + SmartDebug
+> (`Program_Debug_v2024.2`) and cannot do the steps below — it has **no** openocd/RISC-V gdb, **no**
+> SoftConsole, and **not** the Libero design DB (built on the `lkwangsi` Libero host). Also note SmartDebug
+> reads *fabric* nets only — it **cannot** read `SAR_PROG` (a DDR address). All localize steps run on the
+> **Libero host**.
+
 Steps to localize (ranked):
 1. **Make the stalling stage visible.** Either (a) add one UART line before/after each stage
    (resample / window / rangeFFT / cornerturn / azimuthFFT / detect) in `sar_form_image` and rebuild the
-   **payload only** (no fabric re-P&R; re-pack the card with `sd_pack.py`), or (b) read
-   `SAR_PROG @ 0xB0059100` (`pass / idx / total / heartbeat`) live over SmartDebug — shows the stalling
-   stage *and* whether its index is still advancing, with no rebuild.
+   **payload only** (no fabric re-P&R; re-pack the card with `sd_pack.py`) — works from anywhere once
+   rebuilt; or (b) read `SAR_PROG @ 0xB0059100` (`pass / idx / total / heartbeat`) via the **RISC-V JTAG
+   debugger** (SoftConsole openocd + gdb — *not* SmartDebug, which can't touch DDR): halt the hung U54,
+   read the word twice, and see the stalling stage *and* whether its index is still advancing — no rebuild,
+   but needs the JTAG toolchain on the machine driving FlashPro.
 2. **A/B the FFT path.** `u54_1.c` hard-writes `SAR_FFTMODE=1` (fabric CoreFFT) at boot; flip that one
    line to `0` (CPU `sar_cpu_fft`, the always-correct fallback) + payload rebuild. If the pipeline then
    completes, the fabric FFT streaming/re-arm is the culprit (slow but proves it out).
