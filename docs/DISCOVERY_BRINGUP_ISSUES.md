@@ -72,6 +72,13 @@ This also corrects one "ruled out" item: the fabric-clock argument was scoped to
 
 ## Issue #1a — [P0, ROOT CAUSE] Disable Mi-V IHC in the HSS build
 
+> **✅ APPLIED 2026-07-17 (board-confirmation pending).** HSS was rebuilt with `# CONFIG_USE_IHC_V2 is
+> not set` (via `mpfs/fpga/hss/build_hss.sh`; `HSS_IHCInit` + the "Initializing Mi-V IHC" string are
+> confirmed gone from the built ELF), and `mpfs/deliver/sar_top_095t.job` was re-exported to carry the
+> new HSS in eNVM (no fabric re-P&R). **Program the new `.job` and re-test** — a boot that passes
+> `Initializing Mi-V IHC` and reaches `[sar] DONE` closes this. If it still hangs there, fall through to
+> Issue #1. The steps below are retained for reproducibility / a fresh HSS clone.
+
 **Goal:** stop HSS initializing a fabric IHC block the bitstream doesn't have. The app never needed it.
 
 Steps (Libero host):

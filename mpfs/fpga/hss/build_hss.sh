@@ -23,6 +23,11 @@ echo "[hss] defconfig for $BOARD"
 # when CONFIG_CC_USE_SOFTCONSOLE is set (else it defaults to riscv-none-elf- and fails). See
 # application/rules.mk. defconfig does not set it, so force it on the build invocation.
 grep -q '^CONFIG_CC_USE_SOFTCONSOLE=y' .config || echo 'CONFIG_CC_USE_SOFTCONSOLE=y' >> .config
+# Disable Mi-V IHC: HSS_IHCInit pokes a fabric IHC IP at 0x50000000 that this bitstream does NOT
+# contain -> AXI stall -> watchdog reset on first boot (the SAR app never uses IHC; E51 wakes U54_1
+# only). Root cause + evidence: docs/DISCOVERY_BRINGUP_ISSUES.md Issue #1a. Done here (post-defconfig,
+# in .config) so the vendor def_config stays untouched and a fresh HSS clone still gets the fix.
+sed -i 's/^CONFIG_USE_IHC_V2=y/# CONFIG_USE_IHC_V2 is not set/' .config
 echo "[hss] building..."
 "$MAKE" BOARD="$BOARD" CONFIG_CC_USE_SOFTCONSOLE=y -j4
 echo "[hss] build done. Artifacts:"

@@ -28,9 +28,11 @@ committed, and timing-closed:
 UART reaches `[sar] DONE`. The underlying SAR datapath is already **proven on 250T silicon** (focused
 image, corr ~0.97 vs golden; phase-exact fabric FFT) — see [HANDOFF.md](HANDOFF.md).
 
-**Known first-boot blocker (open):** the initial on-silicon boot hangs in HSS at Mi-V IHC init — HSS
-tries to initialize a fabric IHC block this bitstream doesn't include. Root-caused, with a one-line
-HSS-defconfig fix (`# CONFIG_USE_IHC_V2 is not set`): [`docs/DISCOVERY_BRINGUP_ISSUES.md`](docs/DISCOVERY_BRINGUP_ISSUES.md).
+**First-boot blocker — fix applied, board-confirmation pending:** the initial on-silicon boot hung in
+HSS at Mi-V IHC init (HSS tried to initialize a fabric IHC block this bitstream doesn't include). Fixed
+by disabling Mi-V IHC in the HSS build (`# CONFIG_USE_IHC_V2 is not set`); HSS was rebuilt and the
+delivered `mpfs/deliver/sar_top_095t.job` re-exported to carry it. Program the **new** `.job` and confirm
+the boot passes `Initializing Mi-V IHC` → `[sar] DONE`. Root cause + evidence: [`docs/DISCOVERY_BRINGUP_ISSUES.md`](docs/DISCOVERY_BRINGUP_ISSUES.md).
 
 ---
 

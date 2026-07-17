@@ -95,9 +95,15 @@ partition). This is the main `sd_pack.py` change for the Discovery delivery.
    - **Wrap** with `tools/hss-payload-generator` (manifest `mpfs/fpga/sar_app/sar_app.yaml`; needs a
      native host gcc — none on this PC yet) → `payload.bin`. Board validation of runtime still pending.
 4. ⏳ `sd_pack.py --gpt` → SD image with P1(HSS payload)+P2(SARI scene); app reads scene from P2 LBA.
-5. ⏳ Libero: add `hss-envm-wrapper.mpfs-disco-kit.hex` as eNVM client to the `libero_disc` design;
-   re-export the **`.job`** (fabric + HSS-in-eNVM) as the single delivery artifact.
-6. ⏳ On-Discovery bring-up: program `.job` once, write SD, power-cycle → HSS boots app → SAR focus.
+5. ✅ **Libero: eNVM client added + `.job` re-exported (2026-07-17).** `hss-envm-wrapper.mpfs-disco-kit.hex`
+   imported as the `BOOT_MODE_1_ENVM_CLIENT` and the delivery job regenerated via
+   `mpfs/fpga/build_disc_bootable.tcl` (`configure_envm` → `GENERATEPROGRAMMINGDATA` → `export_prog_job`,
+   FABRIC_SNVM+ENVM; **no re-P&R** — the timing-closed fabric is reused). Output installed to
+   `mpfs/deliver/sar_top_095t.job`. **This HSS build has Mi-V IHC disabled** (`# CONFIG_USE_IHC_V2 is not
+   set`, via `build_hss.sh`) — the fix for the first-boot IHC hang, so the delivered `.job` carries it.
+   See [DISCOVERY_BRINGUP_ISSUES.md](DISCOVERY_BRINGUP_ISSUES.md) Issue #1a.
+6. ⏳ On-Discovery bring-up: program the new `.job`, write SD, power-cycle → HSS boots past IHC → app →
+   SAR focus. Board confirmation (`[sar] DONE`) is the only remaining step.
 
 **Done:** the two hardest infrastructure pieces — a **timing-closed fabric bitstream** and a
 **built HSS SD-boot loader** — are complete and committed. Remaining is the cohesive
