@@ -186,3 +186,6 @@ mpfs/fpga/hss/out/*.elf
 
 # generated per-scene SD image + staged scene (large, not delivered via git)
 scratch_stage/
+
+# transient diagnostic job (rebuildable; not a deliverable)
+mpfs/deliver/sar_top_095t_ddrdebug.job
