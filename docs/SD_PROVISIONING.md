@@ -160,3 +160,48 @@ Note: the SAR datapath (RTL + firmware) is **unchanged** from the 250T build tha
 (corr ~0.97 vs golden, phase-exact FFT); only the wrapper/board/storage differ. So for Discovery
 bring-up, a `[MATCH]` plus a cleanly focused `focused.png` is normally sufficient — reach for the full
 emulator diff only if the image looks wrong.
+
+## Diagnose a focus-pipeline stall (thin client, no JTAG)
+If the app boots but never reaches `[sar] DONE` (stuck at `focus pipeline...`), use the **diagnostic
+payload** to see which stage is running and whether it is *advancing* or *frozen* — no Libero, no JTAG,
+no board programming, just a card re-flash + UART.
+
+1. **Get the diagnostic payload** (built with `SAR_DIAG_UART`, streams live progress on the app UART):
+   ```
+   git pull            # brings mpfs/deliver/payload_debug.bin
+   ```
+2. **Pack a diagnostic card** (same as Path B, but point `--payload` at the debug payload):
+   ```
+   python mpfs/host/sd_pack.py --gpt --payload mpfs/deliver/payload_debug.bin \
+       --stage jtag_stage --out sar_sd_debug.img
+   ```
+   Write `sar_sd_debug.img` to the card (balenaEtcher), insert, power-cycle.
+3. **Watch the app UART (COM6)** with the monitor (needs only `pyserial`):
+   ```
+   pip install pyserial
+   python mpfs/host/watch_sar_uart.py --port COM6 --stall 120
+   ```
+   It timestamps every line, prints `>>> STAGE: <name>` at each stage, and flags a **STALL** if the
+   UART goes quiet for `--stall` seconds inside a stage. Reading it:
+   - a `>stage` banner then a `resample-1 512/8167 … 1024/8167 …` counter **climbing** → that stage is
+     **churning (just slow)** — resample legitimately takes ~100 s;
+   - a banner then the counter **frozen** and the UART **goes silent** → that stage **hard-stalled**.
+
+> **This board's stall is a HARD AXI freeze — do NOT wait for a `FAIL` code.** A 41-min run
+> (`DISCOVERY_BRINGUP_ISSUES.md` Issue #4) proved the U54 sticks on an AXI load that never returns, so
+> the `[sar] FAIL form_image = SAR_SEQ_TIMEOUT_*` line **never prints** (the bounded-wait timeout can't
+> fire when the CPU is frozen mid-load). The localization is the **last banner/heartbeat before the UART
+> goes silent** — that names the stalled stage, and the stage maps to the guilty AXI target (the same
+> verdict `run_app_pc_probe.sh` gives from the PC, here over UART with no JTAG):
+>
+> | last stage before silence | guilty access |
+> |---|---|
+> | `resample` | `K_RESAMPLE @0x60003000` (or its DDR gather over FIC0) |
+> | `window` | `K_WINDOW @0x60001000` |
+> | `rangeFFT` / `azimuthFFT` | `K_FFT @0x60004000` (or the FFT DMA S2MM over FIC0) |
+> | `cornerturn` | `K_CORNER_TURN @0x60000000` |
+> | `detect` | CPU→DDR only (no kernel) → the **DDR/FIC0** path |
+
+The stages emit `resample → window → rangeFFT → cornerturn → azimuthFFT → detect`. The production
+`payload.bin` is unaffected — it has no diagnostic prints (the instrumentation is compile-guarded off by
+default).

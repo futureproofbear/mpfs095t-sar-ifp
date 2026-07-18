@@ -47,6 +47,30 @@
 #define SAR_PROG(pass,idx,tot) do { volatile uint32_t *pg=(volatile uint32_t*)(uintptr_t)SAR_PROG_ADDR; \
     pg[0]=(uint32_t)(pass); pg[1]=(uint32_t)(idx); pg[2]=(uint32_t)(tot); pg[3]++; } while (0)
 
+/* ---- SAR_DIAG_UART: live per-stage progress over the app UART (COM6) -------
+ * The DDR progress block above (0xB0059100) is JTAG-pollable only. On a board with no JTAG (the
+ * Discovery thin client), a diagnostic payload built with -DSAR_DIAG_UART streams the SAME progress
+ * on the app console: a ">stage" banner at each stage boundary + a periodic "idx/total" heartbeat
+ * inside the long CPU loops -- so you see WHICH stage is running and whether it is ADVANCING
+ * (churning, just slow) or FROZEN. OFF by default -> production/JTAG builds are byte-identical. */
+#ifdef SAR_DIAG_UART
+#include "drivers/mss/mss_mmuart/mss_uart.h"
+extern mss_uart_instance_t g_mss_uart0_lo;
+static void diag_s(const char *s) { MSS_UART_polled_tx_string(&g_mss_uart0_lo, (const uint8_t *)s); }
+static void diag_u(uint32_t v) {
+    char t[11]; int n = 0;
+    do { t[n++] = (char)('0' + (v % 10u)); v /= 10u; } while (v);
+    char o[12]; int k = 0; while (n) o[k++] = t[--n]; o[k] = '\0';
+    diag_s(o);
+}
+#define DIAG_STAGE(name)       diag_s("[sar]  >" name "\r\n")
+#define DIAG_TICK(tag,idx,tot) do { diag_s("[sar]   " tag " "); diag_u((uint32_t)(idx)); \
+                                    diag_s("/"); diag_u((uint32_t)(tot)); diag_s("\r\n"); } while (0)
+#else
+#define DIAG_STAGE(name)       do {} while (0)
+#define DIAG_TICK(tag,idx,tot) do {} while (0)
+#endif
+
 /* Runtime FFT-mode selector (JTAG/host-writable DDR word): 0 = CPU sar_cpu_fft (default,
  * always-correct global-block-exponent path); 1 = fabric CoreFFT chain (fft_feeder ->
  * gearbox -> CoreFFT -> fft_unloader). The fabric chain was validated end-to-end on silicon
@@ -179,6 +203,7 @@ static int resample_2pass(const sar_geom_t *g, uint32_t spins)
                                 (int16_t *)(uintptr_t)SAR_COEF_WQ(0));
     for (uint32_t i = 0; i < g->M; i++) {
         SAR_PROG(1u, i, g->M);
+        if ((i & 0x1FFu) == 0u) DIAG_TICK("resample-1", i, g->M);
         sar_reg_w(K_RESAMPLE, HLS_ARG0, BUF_SIG + i * g->N * 4u);            /* in  (N-wide) */
         sar_reg_w(K_RESAMPLE, HLS_ARG1, (uint32_t)SAR_COEF_IDX(b));
         sar_reg_w(K_RESAMPLE, HLS_ARG2, (uint32_t)SAR_COEF_WQ(b));
@@ -214,6 +239,7 @@ static int resample_2pass(const sar_geom_t *g, uint32_t spins)
     b = 0;
     for (uint32_t j = 0; j < Np; j++) {
         SAR_PROG(2u, j, Np);
+        if ((j & 0x1FFu) == 0u) DIAG_TICK("resample-2", j, Np);
         sar_reg_w(K_RESAMPLE, HLS_ARG0, BUF_SIG     + j * Mp * 4u);   /* in  (Mp-wide, M valid) */
         sar_reg_w(K_RESAMPLE, HLS_ARG1, (uint32_t)SAR_COEF_IDX(b));
         sar_reg_w(K_RESAMPLE, HLS_ARG2, (uint32_t)SAR_COEF_WQ(b));
@@ -289,6 +315,7 @@ static void cpu_detect(uint32_t src, uint32_t dst, uint32_t n)
     const volatile uint32_t *in  = (const volatile uint32_t *)(uintptr_t)src;
     volatile uint16_t       *out = (volatile uint16_t *)(uintptr_t)dst;
     for (uint32_t i = 0; i < n; i++) {
+        if ((i & 0x3FFFFFu) == 0u) DIAG_TICK("detect", i, n);
         uint32_t w = in[i];
         int32_t re = (int32_t)(int16_t)(uint16_t)(w >> 16);   /* signed I */
         int32_t im = (int32_t)(int16_t)(uint16_t)(w & 0xFFFFu);/* signed Q */
@@ -322,10 +349,12 @@ sar_seq_status_t sar_form_image(uint32_t spin_limit)
 
     sar_stage_ts[0] = readmtime();
     /* 1) keystone resample (2-pass, MSS-computed coeffs): -> SCRATCH */
+    DIAG_STAGE("resample");
     if (!resample_2pass(&g, spins)) return SAR_SEQ_TIMEOUT_RESAMPLE;
     sar_stage_ts[1] = readmtime();
 
     /* 2) window (2-D Hamming: fabric forms hamr[j]*hamc[k]): SCRATCH -> SCRATCH */
+    DIAG_STAGE("window");
     sar_reg_w(K_WINDOW, HLS_ARG0, BUF_SCRATCH);                  /* in  */
     sar_reg_w(K_WINDOW, HLS_ARG1, (uint32_t)SAR_HAMR_ADDR);      /* range taper [Np] */
     sar_reg_w(K_WINDOW, HLS_ARG2, (uint32_t)SAR_HAMC_ADDR);      /* cross taper [Mp] */
@@ -341,12 +370,14 @@ sar_seq_status_t sar_form_image(uint32_t spin_limit)
      *    SIG is free after resample, so ping-pong SCRATCH<->SIG keeps read/write on
      *    separate 256 MB pages. VALIDATED on silicon: decoupled fft_pass streams past
      *    transform 1 (in-place stalled at idx=1). */
+    DIAG_STAGE("rangeFFT");
     { int r = fft_pass(BUF_SCRATCH, BUF_SIG, spins);
       if (r == 1) return SAR_SEQ_TIMEOUT_FFT1;          /* feeder stalled */
       if (r == 2) return SAR_SEQ_TIMEOUT_DMA; }          /* DMA S2MM stalled (range) */
     sar_stage_ts[3] = readmtime();
 
     /* 4) corner-turn (transpose): SIG -> SCRATCH (range-FFT output is now in SIG) */
+    DIAG_STAGE("cornerturn");
     sar_reg_w(K_CORNER_TURN, HLS_ARG0, BUF_SIG);
     sar_reg_w(K_CORNER_TURN, HLS_ARG1, BUF_SCRATCH);
     sar_k_start(K_CORNER_TURN);
@@ -354,6 +385,7 @@ sar_seq_status_t sar_form_image(uint32_t spin_limit)
     sar_stage_ts[4] = readmtime();
 
     /* 5) azimuth FFT: SCRATCH -> SIG (DECOUPLED, same ping-pong as range FFT) */
+    DIAG_STAGE("azimuthFFT");
     { int r = fft_pass(BUF_SCRATCH, BUF_SIG, spins);
       if (r == 1) return SAR_SEQ_TIMEOUT_FFT2;          /* feeder stalled */
       if (r == 2) return SAR_SEQ_TIMEOUT_DMA; }          /* DMA S2MM stalled (azimuth) */
@@ -363,6 +395,7 @@ sar_seq_status_t sar_form_image(uint32_t spin_limit)
      * DEFAULT = CPU detect (correct sqrt, corr 0.97 on silicon -- the SHIPPING path). The fabric
      * detect HLS is UNFIXABLE via SmartHLS (it mis-synthesizes the negative-I sign extension no
      * matter how detect.cpp is written -> ~50% saturation); DETECTMODE 2 selects it for testing only. */
+    DIAG_STAGE("detect");
     if (*(volatile uint32_t *)(uintptr_t)SAR_DETECTMODE_ADDR != 2u) {
         flush_l2_cache(1u);                                  /* read fabric-written SIG from DDR */
         cpu_detect(BUF_SIG, BUF_OUT, SAR_GRID * SAR_GRID);

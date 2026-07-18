@@ -44,6 +44,12 @@ fi
 ARCH="-march=rv64gc -mabi=lp64d -mcmodel=medany -mstrict-align"
 CFLAGS="$ARCH -O2 -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections \
   -Wall -Wno-unused-parameter -DSAR_SD_BOOT -DMPFS_DISCOVERY_KIT"
+# Diagnostic build: SAR_DIAG_UART=1 streams live per-stage progress on the app UART (COM6)
+# so a JTAG-less thin client can localize a focus-pipeline stall. Off by default.
+if [ "${SAR_DIAG_UART:-0}" != "0" ]; then
+  CFLAGS="$CFLAGS -DSAR_DIAG_UART"
+  echo "[sar_app] SAR_DIAG_UART enabled -- diagnostic (UART-progress) build"
+fi
 
 INCS="\
   -I$HERE/config \

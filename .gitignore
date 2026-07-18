@@ -189,3 +189,6 @@ scratch_stage/
 
 # transient diagnostic job (rebuildable; not a deliverable)
 mpfs/deliver/sar_top_095t_ddrdebug.job
+
+# shipped diagnostic payload (thin-client stall probe) -- a deliverable, keep tracked
+!mpfs/deliver/payload_debug.bin
